@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="AgentForge 企业级 Agent 管理与观测平台">
+  <title>AgentForge · Agent 管理平台</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/playground.css?v=20260905-5">
+  <link rel="stylesheet" href="/static/session.css?v=20260905-3">
+  <link rel="stylesheet" href="/static/eval.css?v=20260905-1">
+  <link rel="stylesheet" href="/static/auth.css?v=20260905-7">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">A</span><div><b>AgentForge</b><small>CONTROL PLANE</small></div></div>
+      <nav id="nav">
+        <button class="nav-item active" data-page="dashboard"><span>⌂</span>概览</button>
+        <div class="nav-label">运行中心</div>
+        <button class="nav-item" data-page="sessions"><span>◫</span>会话查询</button>
+        <button class="nav-item" data-page="studio"><span>⌁</span>AgentScope Studio <i class="live-dot"></i></button>
+        <button class="nav-item" data-page="evaluations"><span>◎</span>数据测试</button>
+        <button class="nav-item" data-page="playground"><span>▷</span>Agent 调试台</button>
+        <div class="nav-label">构建中心</div>
+        <button class="nav-item" data-page="agents"><span>◇</span>Agent 管理</button>
+        <button class="nav-item" data-page="mcp"><span>⚙</span>MCP 工具</button>
+        <button class="nav-item" data-page="skills"><span>✦</span>Skill 管理</button>
+        <div class="nav-label">平台设置</div>
+        <button class="nav-item" data-page="models"><span>◉</span>模型配置</button>
+        <button class="nav-item" data-page="sandboxes"><span>▣</span>沙箱管理</button>
+        <button class="nav-item" data-page="roles"><span>♙</span>权限管理</button>
+      </nav>
+      <div class="sidebar-foot">
+        <div class="sidebar-user"><div class="avatar" id="userAvatar">?</div><div><b id="userName">未登录</b><small id="userRole">请先登录</small></div></div>
+        <button type="button" class="logout-btn" id="logoutBtn">退出登录</button>
+      </div>
+    </aside>
+    <main>
+      <header class="topbar"><button class="mobile-menu" id="menuBtn">☰</button><div class="crumb"><span>AgentForge</span><b id="crumbTitle">/ 运行概览</b></div><div class="top-actions"><select id="tenantSwitch" class="select tenant-switch" hidden></select><button type="button" class="btn ghost logout-top" id="logoutTopBtn">退出登录</button><button class="status-chip"><i></i>系统正常</button></div></header>
+      <div id="content" class="content"><div class="loading">正在加载控制台…</div></div>
+    </main>
+  </div>
+  <div id="toast" class="toast"></div>
+  <dialog id="modal"><form id="modalForm"><div class="modal-head"><div><small id="modalEyebrow">新建配置</small><h2 id="modalTitle">添加</h2></div><button type="button" class="close" data-close-modal aria-label="关闭">×</button></div><div id="modalFields"></div><div class="modal-actions"><button type="button" class="btn ghost" data-close-modal>取消</button><button type="submit" class="btn primary" id="modalSubmit">确认添加</button></div></form></dialog>
+  <dialog id="sessionModal"><div id="sessionDetail"></div></dialog>
+  <div id="loginGate" class="login-gate" hidden>
+    <form id="loginForm" class="login-card">
+      <small>AGENTFORGE CONTROL PLANE</small>
+      <h1>登录控制面</h1>
+      <p>按 AgentScope 租户隔离：默认属主可见，同租户按角色共享，跨租户不可见。</p>
+      <label>用户名<input id="loginUser" name="username" autocomplete="username" required></label>
+      <label>密码<input id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
+      <p id="loginError" class="login-error" hidden></p>
+      <button class="btn primary" type="submit">进入控制台</button>
+      <div class="login-hint">林默 linmo / admin123 · 开发者 developer / dev123 · 审计 auditor / audit123 · 演示租户 demo / demo123</div>
+    </form>
+  </div>
+  <script src="/static/app.js?v=20260905-15"></script>
+</body>
+</html>

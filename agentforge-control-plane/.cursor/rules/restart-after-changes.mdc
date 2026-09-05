@@ -1,0 +1,12 @@
+---
+description: Restart the control plane after finishing changes
+alwaysApply: true
+---
+
+# Restart after changes
+
+When a coding task that changes this project is finished, restart the local control plane so the latest code is actually running.
+
+- Stop any existing `uvicorn` on port 8080
+- Start: `.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload`
+- Confirm it is listening, then tell the user it is back at http://127.0.0.1:8080
