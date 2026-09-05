@@ -1,4 +1,6 @@
 # AgentForge Control Plane
+<img width="3020" height="1776" alt="image" src="https://github.com/user-attachments/assets/7f367f6a-e962-41ca-8a97-3524ec9e4308" />
+
 
 基于 Python、FastAPI 与 AgentScope 的 Agent 管理控制面。前端由 FastAPI 同源托管，不需要单独安装 Node.js。
 
