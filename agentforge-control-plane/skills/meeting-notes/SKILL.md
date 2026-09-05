@@ -1,7 +1,7 @@
 ---
 name: 会议纪要
 version: 1.0.0
-description: 把零散讨论整理成决议、待办和风险
+description: 把讨论整理成结论、待办和风险
 ---
 
 # 会议纪要
