@@ -106,6 +106,21 @@ def ensure_schema() -> None:
                     conn.execute(text("ALTER TABLE traces ADD COLUMN langfuse_url TEXT DEFAULT ''"))
             if "agent_id" not in trace_cols:
                 conn.execute(text("ALTER TABLE traces ADD COLUMN agent_id INTEGER NULL"))
+    if "experiments" in inspector.get_table_names():
+        experiment_cols = {col["name"] for col in inspector.get_columns("experiments")}
+        with engine.begin() as conn:
+            if "last_compare" not in experiment_cols:
+                if is_mysql():
+                    conn.execute(text("ALTER TABLE experiments ADD COLUMN last_compare JSON NULL"))
+                else:
+                    conn.execute(text("ALTER TABLE experiments ADD COLUMN last_compare TEXT DEFAULT NULL"))
+            if "assignment_strategy" not in experiment_cols:
+                if is_mysql():
+                    conn.execute(text("ALTER TABLE experiments ADD COLUMN assignment_strategy VARCHAR(32) NULL"))
+                else:
+                    conn.execute(text("ALTER TABLE experiments ADD COLUMN assignment_strategy TEXT DEFAULT 'session_hash'"))
+                conn.execute(text("UPDATE experiments SET assignment_strategy = 'user_hash' WHERE assignment_unit = 'user' AND (assignment_strategy IS NULL OR assignment_strategy = '')"))
+                conn.execute(text("UPDATE experiments SET assignment_strategy = 'session_hash' WHERE assignment_strategy IS NULL OR assignment_strategy = ''"))
     if "evaluation_runs" in inspector.get_table_names():
         eval_cols = {col["name"] for col in inspector.get_columns("evaluation_runs")}
         additions = {
@@ -152,7 +167,9 @@ def _ensure_tenant_columns() -> None:
     tables = {
         "agents", "mcp_servers", "skills", "model_configs", "workflows",
         "sandbox_policies", "roles", "datasets", "dataset_cases",
-        "evaluation_runs", "evaluation_results", "conversations",
+        "evaluation_runs", "evaluation_results", "experiments",
+        "experiment_variants", "experiment_assignments", "experiment_events",
+        "conversations",
         "chat_messages", "traces",
     }
     for table in tables:

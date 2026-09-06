@@ -10,6 +10,10 @@ from app.models import (
     DatasetCase,
     EvaluationResult,
     EvaluationRun,
+    Experiment,
+    ExperimentAssignment,
+    ExperimentEvent,
+    ExperimentVariant,
     McpServer,
     ModelConfig,
     Role,
@@ -73,7 +77,8 @@ DEFAULT_ROLES = {
     "平台管理员": ["*"],
     "Agent 开发者": [
         "agent:read", "agent:write", "workflow:read", "workflow:write",
-        "eval:read", "eval:run", "mcp:read", "skill:read", "model:read",
+        "eval:read", "eval:run", "experiment:read", "experiment:write",
+        "mcp:read", "skill:read", "model:read",
         "sandbox:read", "session:read", "session:write",
     ],
     "审计员": ["session:read", "trace:read"],
@@ -82,6 +87,7 @@ DEFAULT_ROLES = {
 TENANT_TABLES = (
     Agent, McpServer, Skill, ModelConfig, Workflow, SandboxPolicy, Role,
     Conversation, ChatMessage, Trace, Dataset, DatasetCase, EvaluationRun, EvaluationResult,
+    Experiment, ExperimentAssignment, ExperimentEvent, ExperimentVariant,
 )
 
 
@@ -142,6 +148,12 @@ def ensure_iam(db: Session) -> None:
     dev_role = _get_or_create_role(db, default.id, "Agent 开发者", "创建、测试和发布 Agent", DEFAULT_ROLES["Agent 开发者"])
     auditor_role = _get_or_create_role(db, default.id, "审计员", "只读查看会话、链路与日志", DEFAULT_ROLES["审计员"])
     demo_role = _get_or_create_role(db, demo.id, "租户管理员", "演示租户内的全部权限", ["tenant:admin", "agent:read", "agent:write", "session:read", "session:write", "model:read", "mcp:read", "skill:read"])
+
+    granted = list(dev_role.permissions or [])
+    for perm in ("experiment:read", "experiment:write"):
+        if perm not in granted:
+            granted.append(perm)
+    dev_role.permissions = granted
 
     linmo = _get_or_create_user(db, default.id, "linmo", "林默", "admin123", admin_role.id)
     _get_or_create_user(db, default.id, "developer", "陈开发", "dev123", dev_role.id)

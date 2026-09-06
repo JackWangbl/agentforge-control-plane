@@ -18,12 +18,16 @@ from app.access.kinds import ResourceKind
 from app.access.scope import attach_access, kind_for, stamp_owner
 from app.access.service import access_service
 from app.database import Base, SessionLocal, copy_sqlite_if_mysql_empty, engine, ensure_schema, get_db
-from app.models import Agent, ChatMessage, Conversation, Dataset, EvaluationRun, McpServer, ModelConfig, Role, SandboxPolicy, Skill, Trace, Workflow
+from app.models import Agent, ChatMessage, Conversation, Dataset, EvaluationRun, Experiment, McpServer, ModelConfig, Role, SandboxPolicy, Skill, Trace, Workflow
 from app.routers.auth import router as auth_router
 from app.routers.evaluations import router as evaluation_router
+from app.routers.experiments import router as experiment_router
 from app.services.eval_runner import dump_run, start_eval_worker
+from app.services.experiment_runtime import assign_unit, record_run
 from app.schemas import (
+    AgentCopy,
     AgentCreate,
+    AgentRename,
     AgentUpdate,
     McpCreate,
     McpUpdate,
@@ -134,6 +138,7 @@ async def lifespan(_: FastAPI):
 app = FastAPI(title="AgentForge Control Plane", version="0.1.0", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(evaluation_router)
+app.include_router(experiment_router)
 app.mount("/static", StaticFiles(directory=ROOT / "static"), name="static")
 
 
@@ -190,6 +195,11 @@ def dump(row: Any) -> dict[str, Any]:
     if isinstance(row, Dataset):
         data["description"] = row.description or ""
         data["source_name"] = row.source_name or ""
+    if isinstance(row, Experiment):
+        session = object_session(row)
+        if session is not None:
+            from app.services.experiment_runtime import dump_experiment
+            return attach_access(dump_experiment(row, session), row)
     return attach_access(data, row)
 
 
@@ -487,6 +497,74 @@ def create_agent(payload: AgentCreate, user: CurrentUser = Depends(require_permi
     return dump(row)
 
 
+def agent_name_taken(db: Session, name: str, exclude_id: Optional[int] = None) -> bool:
+    stmt = select(Agent.id).where(Agent.name == name)
+    if exclude_id is not None:
+        stmt = stmt.where(Agent.id != exclude_id)
+    return db.scalar(stmt) is not None
+
+
+def require_unique_agent_name(db: Session, name: str, exclude_id: Optional[int] = None) -> str:
+    clean = (name or "").strip()
+    if len(clean) < 2:
+        raise HTTPException(422, "Agent 名称至少 2 个字符")
+    if agent_name_taken(db, clean, exclude_id):
+        raise HTTPException(409, "Agent 名称已存在")
+    return clean
+
+
+def unique_agent_copy_name(db: Session, source_name: str, requested: Optional[str] = None) -> str:
+    raw = (requested or f"{source_name} 副本").strip()
+    if len(raw) < 2:
+        raw = "Agent 副本"
+    raw = raw[:80]
+    if not agent_name_taken(db, raw):
+        return raw
+    base = raw[:70].rstrip()
+    index = 2
+    while True:
+        candidate = f"{base} {index}"[:80]
+        if not agent_name_taken(db, candidate):
+            return candidate
+        index += 1
+
+
+@app.post("/api/agents/{item_id}/copy", status_code=201)
+def copy_agent(item_id: int, payload: Optional[AgentCopy] = None, user: CurrentUser = Depends(require_permission("agent:write")), db: Session = Depends(get_db)) -> dict[str, Any]:
+    source = access_service.get_row(user, ResourceKind.AGENT, item_id, db)
+    requested = payload.name if payload else None
+    row = stamp_owner(Agent(
+        name=unique_agent_copy_name(db, source.name, requested),
+        description=source.description or "",
+        model_name=source.model_name,
+        status="draft",
+        version=source.version or "v1.0.0",
+        system_prompt=source.system_prompt or "",
+        skill_ids=list(source.skill_ids or []),
+        mcp_ids=list(source.mcp_ids or []),
+        sandbox_id=source.sandbox_id,
+        workspace="",
+        success_rate=0,
+    ), user)
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    ensure_workspace(row)
+    db.commit()
+    db.refresh(row)
+    return dump(row)
+
+
+@app.post("/api/agents/{item_id}/rename")
+def rename_agent(item_id: int, payload: AgentRename, user: CurrentUser = Depends(require_permission("agent:write")), db: Session = Depends(get_db)) -> dict[str, Any]:
+    row = access_service.resolve_for_edit(user, ResourceKind.AGENT, item_id, db)
+    row.name = require_unique_agent_name(db, payload.name, exclude_id=item_id)
+    ensure_workspace(row)
+    db.commit()
+    db.refresh(row)
+    return dump(row)
+
+
 @app.get("/api/agents/{item_id}/workspace")
 def get_agent_workspace(item_id: int, user: CurrentUser = Depends(require_permission("agent:read")), db: Session = Depends(get_db)) -> dict[str, Any]:
     agent = access_service.get_row(user, ResourceKind.AGENT, item_id, db)
@@ -546,6 +624,8 @@ def update_resource(resource: str, item_id: int, payload: dict[str, Any] = Body(
             data["transport"] = normalize_mcp_transport(data["transport"])
         if "config" in data:
             data["config"] = merge_mcp_config(getattr(row, "config", None), data.get("config"))
+    if resource == "agents" and data.get("name") is not None:
+        data["name"] = require_unique_agent_name(db, data["name"], exclude_id=item_id)
     for key, value in data.items():
         setattr(row, key, value)
     if resource == "skills":
@@ -666,7 +746,25 @@ def test_model_connection(model_id: int, user: CurrentUser = Depends(require_per
 
 @app.post("/api/playground/run")
 def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_permission("session:write", "agent:write")), db: Session = Depends(get_db)) -> dict[str, Any]:
-    agent = access_service.get_row(user, ResourceKind.AGENT, payload.agent_id, db)
+    experiment = None
+    assignment: dict[str, Any] = {}
+    agent_id = payload.agent_id
+    if payload.experiment_id:
+        experiment = access_service.get_row(user, ResourceKind.EXPERIMENT, payload.experiment_id, db)
+        if experiment.status != "running":
+            raise HTTPException(409, "只有进行中的实验才会分流，请先启动实验")
+        session_hint = payload.session_id or f"debug_{uuid4().hex[:10]}"
+        assignment = assign_unit(
+            db,
+            experiment,
+            session_id=session_hint,
+            user_key=(payload.user_key or "").strip() or user.username,
+            user=user,
+        )
+        payload.session_id = session_hint
+        if not assignment.get("holdout") and assignment.get("agent_id"):
+            agent_id = int(assignment["agent_id"])
+    agent = access_service.get_row(user, ResourceKind.AGENT, agent_id, db)
     model = access_service.get_row(user, ResourceKind.CREDENTIAL, payload.model_config_id, db)
     if not model.enabled:
         raise HTTPException(409, "Selected model config is disabled")
@@ -676,10 +774,20 @@ def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_p
     if conversation and getattr(conversation, "tenant_id", user.tenant_id) not in (None, user.tenant_id):
         raise HTTPException(409, "Session belongs to another tenant")
     if conversation and conversation.agent_id and conversation.agent_id != agent.id:
-        raise HTTPException(409, "Session belongs to another agent workspace")
+        if experiment is not None:
+            session_id = f"debug_{uuid4().hex[:10]}"
+            conversation = None
+            assignment = assign_unit(db, experiment, session_id=session_id, user_key=(payload.user_key or "").strip() or user.username, user=user)
+        else:
+            raise HTTPException(409, "Session belongs to another agent workspace")
     stored = load_session(agent, session_id)
     if stored and stored.get("agent_id") and stored.get("agent_id") != agent.id:
-        raise HTTPException(409, "Session belongs to another agent workspace")
+        if experiment is not None:
+            session_id = f"debug_{uuid4().hex[:10]}"
+            stored = None
+            assignment = assign_unit(db, experiment, session_id=session_id, user_key=(payload.user_key or "").strip() or user.username, user=user)
+        else:
+            raise HTTPException(409, "Session belongs to another agent workspace")
     history = [
         {"role": item.get("role"), "content": item.get("content") or ""}
         for item in (stored or {}).get("messages") or []
@@ -766,6 +874,17 @@ def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_p
         latency_ms=latency_ms,
         title=payload.message,
     )
+    if experiment is not None:
+        record_run(
+            db,
+            experiment,
+            assignment,
+            session_id=session_id,
+            status=mode,
+            latency_ms=latency_ms,
+            tokens=int(usage.get("total_tokens") or tokens),
+            user=user,
+        )
     db.commit()
     messages = persisted.get("messages") or [
         {"role": row.role, "content": row.content, "agent_name": row.agent_name}
@@ -786,6 +905,7 @@ def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_p
         "spans": spans,
         "latency_ms": latency_ms,
         "usage": usage,
+        "experiment": assignment or None,
     }
 
 

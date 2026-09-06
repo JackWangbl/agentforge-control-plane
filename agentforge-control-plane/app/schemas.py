@@ -105,6 +105,14 @@ class ModelUpdate(BaseModel):
     enabled: Optional[bool] = None
 
 
+class AgentCopy(BaseModel):
+    name: Optional[str] = Field(default=None, max_length=80)
+
+
+class AgentRename(BaseModel):
+    name: str = Field(min_length=2, max_length=80)
+
+
 class AgentUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=2, max_length=80)
     description: Optional[str] = None
@@ -138,6 +146,46 @@ class PlaygroundRun(BaseModel):
     model_config_id: int
     message: str = Field(min_length=1, max_length=20000)
     session_id: Optional[str] = None
+    experiment_id: Optional[int] = None
+    user_key: Optional[str] = Field(default=None, max_length=120)
+
+
+class ExperimentVariantIn(BaseModel):
+    key: str = ""
+    name: str = ""
+    agent_id: int
+    weight: int = Field(default=50, ge=1, le=1000)
+
+
+class ExperimentCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    description: str = ""
+    assignment_unit: str = "session"
+    assignment_strategy: str = "user_hash"
+    traffic_percent: int = Field(default=100, ge=1, le=100)
+    variants: list[ExperimentVariantIn] = []
+
+
+class ExperimentUpdate(BaseModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    assignment_unit: Optional[str] = None
+    assignment_strategy: Optional[str] = None
+    traffic_percent: Optional[int] = Field(default=None, ge=1, le=100)
+    variants: Optional[list[ExperimentVariantIn]] = None
+
+
+class ExperimentAssign(BaseModel):
+    unit_key: str = ""
+    session_id: Optional[str] = Field(default=None, max_length=120)
+    user_key: Optional[str] = Field(default=None, max_length=120)
+
+
+class ExperimentCompare(BaseModel):
+    dataset_id: Optional[int] = None
+    prompts: list[str] = []
+    scorer: str = "contains"
+    case_limit: int = Field(default=6, ge=1, le=12)
 
 
 class ResourceStatusUpdate(BaseModel):

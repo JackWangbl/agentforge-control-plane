@@ -16,6 +16,7 @@ class ResourceKind(str, Enum):
     TRACE = "trace"
     ROLE = "role"
     USER = "user"
+    EXPERIMENT = "experiment"
 
 
 class ResourcePermission(str, Enum):
@@ -36,6 +37,7 @@ RESOURCE_READ = {
     ResourceKind.TRACE: "trace:read",
     ResourceKind.ROLE: "role:read",
     ResourceKind.USER: "user:read",
+    ResourceKind.EXPERIMENT: "experiment:read",
 }
 
 RESOURCE_WRITE = {
@@ -51,6 +53,7 @@ RESOURCE_WRITE = {
     ResourceKind.TRACE: "trace:read",
     ResourceKind.ROLE: "role:write",
     ResourceKind.USER: "user:write",
+    ResourceKind.EXPERIMENT: "experiment:write",
 }
 
 ROUTE_KIND = {
@@ -64,6 +67,7 @@ ROUTE_KIND = {
     "traces": ResourceKind.TRACE,
     "datasets": ResourceKind.DATASET,
     "evaluations": ResourceKind.EVALUATION,
+    "experiments": ResourceKind.EXPERIMENT,
 }
 
 PERMISSION_CATALOG = [
@@ -91,4 +95,6 @@ PERMISSION_CATALOG = [
     {"key": "trace:read", "label": "查看链路", "group": "运行"},
     {"key": "eval:read", "label": "查看评测", "group": "质量"},
     {"key": "eval:run", "label": "执行评测", "group": "质量"},
+    {"key": "experiment:read", "label": "查看实验", "group": "质量"},
+    {"key": "experiment:write", "label": "管理实验", "group": "质量"},
 ]

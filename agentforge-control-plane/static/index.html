@@ -6,9 +6,10 @@
   <meta name="description" content="AgentForge 企业级 Agent 管理与观测平台">
   <title>AgentForge · Agent 管理平台</title>
   <link rel="stylesheet" href="/static/styles.css">
-  <link rel="stylesheet" href="/static/playground.css?v=20260905-5">
+  <link rel="stylesheet" href="/static/playground.css?v=20260906-1">
   <link rel="stylesheet" href="/static/session.css?v=20260905-3">
   <link rel="stylesheet" href="/static/eval.css?v=20260906-1">
+  <link rel="stylesheet" href="/static/experiment.css?v=20260906-3">
   <link rel="stylesheet" href="/static/auth.css?v=20260905-7">
 </head>
 <body>
@@ -21,6 +22,7 @@
         <button class="nav-item" data-page="sessions"><span>◫</span>会话查询</button>
         <button class="nav-item" data-page="studio"><span>⌁</span>AgentScope Studio <i class="live-dot"></i></button>
         <button class="nav-item" data-page="evaluations"><span>◎</span>数据测试</button>
+        <button class="nav-item" data-page="experiments"><span>⇄</span>A/B 实验</button>
         <button class="nav-item" data-page="playground"><span>▷</span>Agent 调试台</button>
         <div class="nav-label">构建中心</div>
         <button class="nav-item" data-page="agents"><span>◇</span>Agent 管理</button>
@@ -53,9 +55,9 @@
       <label>密码<input id="loginPass" name="password" type="password" autocomplete="current-password" required></label>
       <p id="loginError" class="login-error" hidden></p>
       <button class="btn primary" type="submit">进入控制台</button>
-      <div class="login-hint">林默 linmo / admin123 · 开发者 developer / dev123 · 审计 auditor / audit123 · 演示租户 demo / demo123</div>
+      <div class="login-hint">请使用平台管理员分配的账号登录；生产环境不提供默认密码。</div>
     </form>
   </div>
-  <script src="/static/app.js?v=20260906-2"></script>
+  <script src="/static/app.js?v=20260906-10"></script>
 </body>
 </html>

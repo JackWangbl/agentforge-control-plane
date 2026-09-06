@@ -1,5 +1,33 @@
 .resource-edit { margin-left: 0; padding: 5px 10px; font-size: 11px; }
 .resource-ops { margin-left: auto; display: flex; gap: 5px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.resource-card { overflow: visible; }
+.resource-card:has(.card-menu.open) { position: relative; z-index: 4; }
+.card-menu { position: relative; margin-left: auto; }
+.card-menu-btn {
+  width: 28px; height: 28px; padding: 0 0 2px;
+  border: 1px solid var(--line); border-radius: 7px;
+  background: #fff; color: #5d6875;
+  font-size: 18px; line-height: 1; letter-spacing: 0;
+  cursor: pointer; display: grid; place-items: center;
+}
+.card-menu-btn:hover,
+.card-menu.open .card-menu-btn {
+  border-color: #b7d0fb; background: #f5f8ff; color: var(--blue);
+}
+.card-menu-list {
+  display: none; position: absolute; right: 0; bottom: calc(100% + 6px);
+  min-width: 136px; padding: 6px;
+  background: #fff; border: 1px solid var(--line); border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(22,31,50,.14); z-index: 20;
+}
+.card-menu.open .card-menu-list { display: flex; flex-direction: column; gap: 2px; }
+.card-menu-item {
+  width: 100%; text-align: left; border: 0; background: transparent;
+  padding: 8px 10px; border-radius: 7px; font-size: 12px; color: var(--ink); cursor: pointer;
+}
+.card-menu-item:hover { background: #f3f6fb; }
+.card-menu-item.danger { color: var(--red); }
+.card-menu-item.danger:hover { background: #fff6f6; }
 .btn.danger { color: var(--red); border-color: #f1d0d0; }
 .btn.danger:hover { background: #fff6f6; }
 .switch { border: 0; cursor: pointer; flex: 0 0 auto; }

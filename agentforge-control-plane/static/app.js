@@ -20,7 +20,7 @@ function apiError(err){
   return raw.slice(0,180);
 }
 const authState = {token: localStorage.getItem('af_token')||'', me:null};
-const pagePerm = {dashboard:'',sessions:'session:read',studio:'trace:read',traces:'trace:read',evaluations:'eval:read',playground:'agent:write',agents:'agent:read',workflows:'workflow:read',mcp:'mcp:read',skills:'skill:read',models:'model:read',sandboxes:'sandbox:read',roles:'role:read'};
+const pagePerm = {dashboard:'',sessions:'session:read',studio:'trace:read',traces:'trace:read',evaluations:'eval:read',experiments:'experiment:read',playground:'agent:write',agents:'agent:read',workflows:'workflow:read',mcp:'mcp:read',skills:'skill:read',models:'model:read',sandboxes:'sandbox:read',roles:'role:read'};
 function can(perm){
   if(!perm) return !!authState.me;
   const granted=authState.me?.permissions||[];
@@ -92,10 +92,10 @@ const api = async (path, options={}) => {
 };
 const fmt = n => n >= 1000000 ? (n/1000000).toFixed(2)+'M' : n >= 1000 ? (n/1000).toFixed(1)+'K' : n;
 const dt = value => new Date(value+'Z').toLocaleString('zh-CN',{month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
-const statusText = {completed:'已完成',running:'运行中',failed:'失败',ok:'正常',error:'异常',published:'已发布',draft:'草稿',queued:'排队中',passed:'通过',skipped:'跳过',cancelled:'已取消'};
-const titles = {dashboard:'运行概览',sessions:'会话查询',studio:'AgentScope Studio',traces:'AgentScope Studio',evaluations:'数据测试',playground:'Agent 调试台',agents:'Agent 管理',workflows:'Agent 编排',mcp:'MCP 工具',skills:'Skill 管理',models:'模型配置',sandboxes:'沙箱管理',roles:'权限管理'};
+const statusText = {completed:'已完成',running:'运行中',failed:'失败',ok:'正常',error:'异常',published:'已发布',draft:'草稿',queued:'排队中',passed:'通过',skipped:'跳过',cancelled:'已取消',paused:'已暂停'};
+const titles = {dashboard:'运行概览',sessions:'会话查询',studio:'AgentScope Studio',traces:'AgentScope Studio',evaluations:'数据测试',experiments:'A/B 实验',playground:'Agent 调试台',agents:'Agent 管理',workflows:'Agent 编排',mcp:'MCP 工具',skills:'Skill 管理',models:'模型配置',sandboxes:'沙箱管理',roles:'权限管理'};
 const pageMeta = {
-  sessions:['SESSION EXPLORER','会话查询','检索和审计所有 Agent 会话记录'], studio:['AGENTSCOPE STUDIO','AgentScope Studio','查看 Agent 运行轨迹、Token 消耗与调试视图'], traces:['AGENTSCOPE STUDIO','AgentScope Studio','查看 Agent 运行轨迹、Token 消耗与调试视图'], evaluations:['EVALUATION','数据测试','用标准数据集持续验证 Agent 质量'], playground:['AGENT PLAYGROUND','Agent 调试台','每个 Agent 使用独立工作空间保存会话、链路和配置'], agents:['AGENT REGISTRY','Agent 管理','管理 Agent 配置、版本与发布状态'], workflows:['ORCHESTRATION','Agent 编排','通过拖拽组合多 Agent 协作流程'], mcp:['TOOL REGISTRY','MCP 工具','集中配置和管控 MCP 服务与工具'], skills:['CAPABILITY HUB','Skill 管理','人工添加可复用的 Agent 专业能力'], models:['MODEL GATEWAY','模型配置','填写模型供应商、API 密钥与推理参数'], sandboxes:['SECURE RUNTIME','沙箱管理','隔离 Agent 的代码和工具执行环境'], roles:['ACCESS CONTROL','权限管理','基于角色控制平台资源访问权限']
+  sessions:['SESSION EXPLORER','会话查询','检索和审计所有 Agent 会话记录'], studio:['AGENTSCOPE STUDIO','AgentScope Studio','查看 Agent 运行轨迹、Token 消耗与调试视图'], traces:['AGENTSCOPE STUDIO','AgentScope Studio','查看 Agent 运行轨迹、Token 消耗与调试视图'], evaluations:['EVALUATION','数据测试','用标准数据集持续验证 Agent 质量'], experiments:['A/B EXPERIMENT','A/B 分流实验','把流量按权重分到不同 Agent，对比延迟、失败率和回复质量'], playground:['AGENT PLAYGROUND','Agent 调试台','每个 Agent 使用独立工作空间保存会话、链路和配置'], agents:['AGENT REGISTRY','Agent 管理','管理 Agent 配置、版本与发布状态'], workflows:['ORCHESTRATION','Agent 编排','通过拖拽组合多 Agent 协作流程'], mcp:['TOOL REGISTRY','MCP 工具','集中配置和管控 MCP 服务与工具'], skills:['CAPABILITY HUB','Skill 管理','人工添加可复用的 Agent 专业能力'], models:['MODEL GATEWAY','模型配置','填写模型供应商、API 密钥与推理参数'], sandboxes:['SECURE RUNTIME','沙箱管理','隔离 Agent 的代码和工具执行环境'], roles:['ACCESS CONTROL','权限管理','基于角色控制平台资源访问权限']
 };
 let currentPage='dashboard', currentParam='';
 function pageTools(extra=''){
@@ -143,7 +143,39 @@ async function openSessionDetail(sessionId){
 
 const resourceInfo={agents:{icon:'◇',name:'Agent',desc:x=>x.description,meta:x=>[x.model_name+' · '+(x.version||''), x.workspace?('空间 '+x.workspace):agentBindSummary(x)],action:'新建 Agent'},mcp:{icon:'⚙',name:'MCP 服务',desc:x=>x.endpoint,meta:x=>[mcpTransportLabel(x.transport),(x.runnable?'可调用 ':'')+(x.tools_count||0)+' 个工具'],action:'添加 MCP'},skills:{icon:'✦',name:'Skill',desc:x=>x.description,meta:x=>[x.version,x.has_instruction?'指令已就绪':'待填写指令'],action:'添加 Skill'},models:{icon:'◉',name:'模型',desc:x=>x.model_id,meta:x=>[x.provider,x.has_credential?'密钥已就绪':'待填写密钥'],action:'添加模型'},sandboxes:{icon:'▣',name:'沙箱策略',desc:x=>x.runtime+' · '+(x.backend||'local'),meta:x=>[x.cpu_limit+' / '+x.memory_limit,(x.network_mode==='deny'?'断网隔离':x.network_mode)+' · '+(x.timeout_seconds||60)+'s'],action:'新建策略'},roles:{icon:'♙',name:'角色',desc:x=>x.description,meta:x=>[x.user_count+' 位用户',(x.permissions||[]).length+' 项权限'],action:'新建角色'}};
 const resourceStore = {};
-function resourceActions(page,x){const writable=x.editable!==false;const primary=page==='agents'?`<button type="button" class="btn primary resource-edit" onclick="openPlayground(${x.id})">调试运行</button>`:page==='models'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用模型'"} onclick="testModel(${x.id})">连通测试</button>`:page==='mcp'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 MCP'"} onclick="testMcp(${x.id})">探测工具</button>`:page==='skills'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 Skill'"} onclick="testSkill(${x.id})">预览指令</button>`:page==='sandboxes'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用沙箱'"} onclick="testSandbox(${x.id})">试跑代码</button>`:'';return `${primary}${writable?`<button type="button" class="btn ghost resource-edit" onclick="openEdit('${page}',${x.id})">编辑</button><button type="button" class="btn ghost resource-edit danger" onclick="removeResource('${page}',${x.id})">删除</button>`:'<span class="muted">只读</span>'}`}
+function resourceMenuItem(label,onclick,extra=''){return `<button type="button" class="card-menu-item${extra}" role="menuitem" onclick="${onclick}">${label}</button>`}
+function resourceActions(page,x){
+  const writable=x.editable!==false;
+  if(page==='agents'){
+    const items=[resourceMenuItem('调试运行',`openPlayground(${x.id})`)];
+    if(can('agent:write')) items.push(resourceMenuItem('复制',`copyAgent(${x.id})`));
+    if(writable&&can('agent:write')) items.push(resourceMenuItem('重命名',`openRenameAgent(${x.id})`));
+    if(writable){
+      items.push(resourceMenuItem('编辑',`openEdit('${page}',${x.id})`));
+      items.push(resourceMenuItem('删除',`removeResource('${page}',${x.id})`,' danger'));
+    }
+    return `<div class="card-menu"><button type="button" class="card-menu-btn" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false" onclick="toggleCardMenu(event,this)">⋮</button><div class="card-menu-list" role="menu">${items.join('')}</div></div>`;
+  }
+  const primary=page==='models'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用模型'"} onclick="testModel(${x.id})">连通测试</button>`:page==='mcp'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 MCP'"} onclick="testMcp(${x.id})">探测工具</button>`:page==='skills'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 Skill'"} onclick="testSkill(${x.id})">预览指令</button>`:page==='sandboxes'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用沙箱'"} onclick="testSandbox(${x.id})">试跑代码</button>`:'';
+  return `${primary}${writable?`<button type="button" class="btn ghost resource-edit" onclick="openEdit('${page}',${x.id})">编辑</button><button type="button" class="btn ghost resource-edit danger" onclick="removeResource('${page}',${x.id})">删除</button>`:'<span class="muted">只读</span>'}`
+}
+function toggleCardMenu(event,btn){
+  event.stopPropagation();
+  const menu=btn.closest('.card-menu');
+  const open=menu.classList.contains('open');
+  closeCardMenus();
+  if(!open){
+    menu.classList.add('open');
+    btn.setAttribute('aria-expanded','true');
+  }
+}
+function closeCardMenus(){
+  document.querySelectorAll('.card-menu.open').forEach(menu=>{
+    menu.classList.remove('open');
+    const btn=menu.querySelector('.card-menu-btn');
+    if(btn) btn.setAttribute('aria-expanded','false');
+  });
+}
 function statusControl(page,x){if(x.enabled===undefined)return '';return `<button type="button" class="switch ${x.enabled?'on':''}" role="switch" aria-checked="${x.enabled}" aria-label="${x.enabled?'停用':'启用'}${x.name}" title="点击${x.enabled?'停用':'启用'}" onclick="toggleEnabled('${page}',${x.id},${!x.enabled})"><i></i></button>`}
 function agentBindSummary(x){
   const skills=(x.bound_skills||[]).map(item=>item.name);
@@ -475,6 +507,197 @@ function bindEvalPage(){
   bindEvalChrome();
   evalHydrate();
 }
+const expState={id:'',catalog:{experiments:[],agents:[]}};
+async function experiments(){
+  const [rows,agents]=await Promise.all([api('/api/experiments'),api('/api/agents')]);
+  expState.catalog={experiments:rows,agents};
+  const current=rows.find(x=>String(x.id)===String(expState.id))||rows[0];
+  if(current) expState.id=String(current.id);
+  const side=rows.length?rows.map(x=>`<button type="button" class="eval-ds ${String(x.id)===String(expState.id)?'active':''}" data-exp="${x.id}"><b>${escapeHtml(x.name)}</b><small>${pill(x.status)} · ${(x.variants||[]).map(v=>v.key).join('/')||'未配置'}</small></button>`).join(''):'<div class="empty">还没有实验</div>';
+  return `${head('experiments', pageTools(`<button class="btn primary" onclick="expOpenForm()">＋ 新建实验</button>`))}
+  <div class="eval-grid"><aside class="eval-side">${side}</aside><section class="eval-main" id="expMain">${current?'<div class="loading">正在读取实验…</div>':'<div class="empty">先建一个实验，把流量分到两个 Agent。</div>'}</section></div>`;
+}
+async function expLoad(id){
+  const main=$('#expMain'); if(!main) return;
+  try{
+    const row=await api('/api/experiments/'+id);
+    expState.id=String(row.id);
+    const variants=row.variants||[];
+    const actions=row.status==='draft'||row.status==='paused'
+      ? `<button class="btn primary" onclick="expAction(${row.id},'start')">启动分流</button>`
+      : row.status==='running'
+      ? `<button class="btn ghost" onclick="expAction(${row.id},'pause')">暂停</button><button class="btn ghost" onclick="expAction(${row.id},'complete')">结束实验</button>`
+      : '';
+    main.innerHTML=`<div class="eval-toolbar"><div><b>${escapeHtml(row.name)}</b><div class="muted">${pill(row.status)} · ${escapeHtml(expStrategyLabel(row))} · 进组流量 ${row.traffic_percent||100}%</div></div>
+      <button class="btn ghost" onclick="expOpenForm(${row.id})">编辑</button>
+      ${actions}
+      <button class="btn primary" onclick="expOpenCompare(${row.id})" ${variants.length<2?'disabled':''}>对比测试</button>
+      <button class="btn ghost" onclick="expTry(${row.id})" ${row.status==='running'?'':'disabled'}>去调试台试分流</button>
+      <button class="btn ghost danger" onclick="expDelete(${row.id})">删除</button></div>
+      ${row.description?`<p class="muted">${escapeHtml(row.description)}</p>`:''}
+      <div class="eval-metrics">
+        <div class="eval-metric"><span>变体</span><b>${variants.length}</b></div>
+        <div class="eval-metric"><span>已分流会话</span><b>${row.total_assignments||variants.reduce((n,x)=>n+(x.assignments||0),0)}</b></div>
+        <div class="eval-metric"><span>已记录回复</span><b>${variants.reduce((n,x)=>n+(x.runs||0),0)}</b></div>
+        <div class="eval-metric"><span>当前领先</span><b>${row.winner||'样本不足'}</b></div>
+      </div>
+      <table class="data-table"><thead><tr><th>变体</th><th>Agent</th><th>计划占比</th><th>实际分流</th><th>预演占比</th><th>回复</th><th>对比通过率</th><th>失败率</th><th>平均延迟</th></tr></thead>
+      <tbody>${variants.map(x=>`<tr><td><b>${escapeHtml(x.key)}</b> ${escapeHtml(x.name||'')}</td><td>${escapeHtml(x.agent_name||'')}</td><td>${x.share||0}%</td><td>${(row.total_assignments||0)?`${x.assignments||0}（${x.actual_share||0}%）`:'尚未进组'}</td><td>${x.preview_count||0} 次 · ${x.preview_share||0}%</td><td>${x.runs||0}</td><td>${x.compare_runs?((x.compare_passed||0)+(x.compare_failed||0)?`${x.compare_pass_rate}%`:'仅对照'):'—'}</td><td>${x.error_rate||0}%</td><td>${x.avg_latency_ms||0} ms</td></tr>`).join('')}</tbody></table>
+      ${expCompareHtml(row)}
+      <p class="muted">「实际分流」要等启动后有会话进组才会涨，对比测试不会记分流。没有真实流量时看「预演占比」：按当前权重用同一套哈希预演 ${row.preview_samples||200} 次。</p>`;
+  }catch(e){main.innerHTML=`<div class="empty">读取失败：${escapeHtml(apiError(e))}</div>`}
+}
+function bindExpPage(){
+  document.querySelectorAll('[data-exp]').forEach(btn=>btn.onclick=()=>{expState.id=btn.dataset.exp;document.querySelectorAll('[data-exp]').forEach(x=>x.classList.toggle('active',x===btn));expLoad(btn.dataset.exp)});
+  if(expState.id) expLoad(expState.id);
+}
+function expVariantRow(agents,item,index){
+  return `<div class="exp-variant"><span class="exp-key">${escapeHtml(item.key||String.fromCharCode(65+index))}</span>
+    <input name="variant_name" value="${escapeHtml(item.name||'')}">
+    <select class="select" name="variant_agent">${(agents||[]).map(a=>`<option value="${a.id}" ${Number(a.id)===Number(item.agent_id)?'selected':''}>${escapeHtml(a.name)}</option>`).join('')}</select>
+    <input type="number" name="variant_weight" min="1" max="1000" value="${item.weight||50}">
+    <input type="hidden" name="variant_key" value="${escapeHtml(item.key||String.fromCharCode(65+index))}"></div>`;
+}
+const EXP_STRATEGIES=[
+  {id:'user_hash',label:'按用户 ID 哈希',hint:'同一用户始终分到同一 Agent'},
+  {id:'session_hash',label:'按 Session ID 哈希',hint:'同一会话始终同一 Agent，换会话可能换 Agent'},
+  {id:'user_first',label:'按用户首次进组',hint:'用户第一次按权重随机进组，之后一直粘滞'},
+  {id:'random',label:'每次随机',hint:'每次请求独立抽取，不保证同一用户同一 Agent'}
+];
+function expStrategyMeta(id,unit){
+  return EXP_STRATEGIES.find(x=>x.id===id)||EXP_STRATEGIES.find(x=>unit==='user'?x.id==='user_hash':x.id==='session_hash')||EXP_STRATEGIES[0];
+}
+function expStrategyLabel(row){
+  return row.assignment_strategy_label||expStrategyMeta(row.assignment_strategy,row.assignment_unit).label;
+}
+function expOpenForm(id){
+  const agents=expState.catalog.agents||[];
+  if(agents.length<2){toast('请先至少准备两个 Agent');return}
+  const row=(expState.catalog.experiments||[]).find(x=>Number(x.id)===Number(id))||{};
+  const variants=row.variants&&row.variants.length>=2?row.variants:[{key:'A',name:'对照',agent_id:agents[0].id,weight:50},{key:'B',name:'实验',agent_id:agents[1].id,weight:50}];
+  const strategy=row.assignment_strategy||(row.assignment_unit==='session'?'session_hash':'user_hash');
+  evalOpenModal(id?'编辑实验':'新建实验',id?'保存':'创建',`<div class="eval-form">
+    <div class="field"><label>实验名称</label><input name="name" required value="${escapeHtml(row.name||'')}" placeholder="例如 客服提示词对比"></div>
+    <div class="field"><label>分流策略</label><select class="select" style="width:100%" name="assignment_strategy" id="expStrategy">${EXP_STRATEGIES.map(x=>`<option value="${x.id}" ${x.id===strategy?'selected':''}>${x.label}</option>`).join('')}</select><small class="exp-strategy-hint" id="expStrategyHint">${escapeHtml(expStrategyMeta(strategy).hint)}</small></div>
+    <div class="field"><label>进组流量 %</label><input type="number" name="traffic_percent" min="1" max="100" value="${row.traffic_percent||100}"></div>
+    <div class="field wide"><label>说明</label><input name="description" value="${escapeHtml(row.description||'')}" placeholder="可选"></div>
+    <div class="field wide"><label>变体 · Agent · 权重</label><div id="expVariantList">${variants.map((item,i)=>expVariantRow(agents,item,i)).join('')}</div>
+    <button type="button" class="btn ghost" id="expAddVariant">＋ 增加变体</button></div>
+  </div>`,'experiments',true);
+  $('#modalForm').dataset.id=id?String(id):'';
+  const add=$('#expAddVariant');
+  if(add) add.onclick=()=>{
+    const list=$('#expVariantList');
+    const n=list.querySelectorAll('.exp-variant').length;
+    if(n>=6){toast('最多 6 个变体');return}
+    list.insertAdjacentHTML('beforeend',expVariantRow(agents,{key:String.fromCharCode(65+n),name:'变体 '+String.fromCharCode(65+n),agent_id:agents[0].id,weight:50},n));
+  };
+  const strategySel=$('#expStrategy'),hint=$('#expStrategyHint');
+  if(strategySel&&hint) strategySel.onchange=()=>{hint.textContent=expStrategyMeta(strategySel.value).hint};
+}
+function expCollect(form){
+  const names=[...form.querySelectorAll('[name="variant_name"]')].map(x=>x.value);
+  const agents=[...form.querySelectorAll('[name="variant_agent"]')].map(x=>Number(x.value));
+  const weights=[...form.querySelectorAll('[name="variant_weight"]')].map(x=>Number(x.value||50));
+  const keys=[...form.querySelectorAll('[name="variant_key"]')].map(x=>x.value);
+  return keys.map((key,i)=>({key,name:names[i]||('变体 '+key),agent_id:agents[i],weight:weights[i]||50}));
+}
+async function expSubmit(form){
+  const data=Object.fromEntries(new FormData(form));
+  const payload={name:String(data.name||'').trim(),description:data.description||'',assignment_strategy:data.assignment_strategy||'user_hash',traffic_percent:Number(data.traffic_percent||100),variants:expCollect(form)};
+  if(!payload.name){toast('请填写实验名称');return}
+  const id=$('#modalForm').dataset.id;
+  const row=await api(id?'/api/experiments/'+id:'/api/experiments',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+  $('#modal').close();
+  toast(id?'实验已更新':'实验已创建，启动后才会分流');
+  expState.id=String(row.id);
+  await render('experiments');
+}
+async function expAction(id,action){
+  try{
+    await api(`/api/experiments/${id}/${action}`,{method:'POST'});
+    toast(action==='start'?'已开始分流':action==='pause'?'已暂停':'实验已结束');
+    await render('experiments');
+  }catch(err){toast(apiError(err)||'操作失败')}
+}
+async function expDelete(id){
+  if(!confirm('删除这个实验？分流记录也会去掉。')) return;
+  try{
+    await api('/api/experiments/'+id,{method:'DELETE'});
+    expState.id='';
+    toast('实验已删除');
+    await render('experiments');
+  }catch(err){toast(apiError(err)||'删除失败')}
+}
+function expTry(id){
+  chatState.experimentId=String(id);
+  resetChat();
+  render('playground');
+}
+function expCompareStatus(status){
+  return {passed:'通过',failed:'未通过',error:'失败',skipped:'仅对照'}[status]||status||'';
+}
+function expCompareHtml(row){
+  const snap=row.last_compare;
+  if(!snap||!(snap.cases||[]).length){
+    return `<div class="exp-compare empty-box">还没有对比结果。点「对比测试」，用同一批问题同时打到各个变体，才能看出谁更好。</div>`;
+  }
+  const variants=snap.summary||[];
+  const hasExpected=!!snap.has_expected||(snap.cases||[]).some(c=>String(c.expected||'').trim());
+  const head=variants.map(v=>`<th>${escapeHtml(v.key)} ${escapeHtml(v.name||'')}</th>`).join('');
+  const body=(snap.cases||[]).map(c=>{
+    const cells=(c.variants||[]).map(v=>`<td class="exp-reply"><div class="exp-score ${escapeHtml(v.status||'')}">${expCompareStatus(v.status)} · ${v.latency_ms||0}ms</div><p>${escapeHtml((v.reply||'').slice(0,280))}</p></td>`).join('');
+    return `<tr><td><b>${escapeHtml((c.input||'').slice(0,90))}</b>${c.expected?`<div class="muted">期望 ${escapeHtml(String(c.expected).slice(0,60))}</div>`:''}</td>${cells}</tr>`;
+  }).join('');
+  const metrics=variants.map(v=>{
+    const judged=(v.passed||0)+(v.failed||0);
+    if(hasExpected||judged) return `<div class="eval-metric"><span>${escapeHtml(v.key)} 通过率</span><b>${v.pass_rate??0}%</b></div>`;
+    const okRate=v.ok_rate!=null?v.ok_rate:expCompareOkRate(snap,v.key);
+    return `<div class="eval-metric"><span>${escapeHtml(v.key)} 回复成功</span><b>${okRate}%</b></div>`;
+  }).join('');
+  return `<div class="exp-compare">
+    <div class="eval-toolbar"><div><b>对比测试结果</b><div class="muted">${escapeHtml(snap.ran_at||'')} · ${snap.dataset_name?escapeHtml(snap.dataset_name)+' · ':''}领先 ${escapeHtml(snap.winner||'—')}</div></div></div>
+    ${hasExpected?'':`<p class="muted">这次题目没有期望答案，所以没有通过率。请选带期望的数据集，或写成「问题 || 期望答案」。</p>`}
+    <div class="eval-metrics">${metrics}</div>
+    <table class="data-table exp-compare-table"><thead><tr><th>问题</th>${head}</tr></thead><tbody>${body}</tbody></table>
+  </div>`;
+}
+function expCompareOkRate(snap,key){
+  const rows=(snap.cases||[]).map(c=>(c.variants||[]).find(v=>v.key===key)).filter(Boolean);
+  if(!rows.length) return 0;
+  return Math.round(rows.filter(v=>v.status!=='error').length/rows.length*100);
+}
+async function expOpenCompare(id){
+  const datasets=await api('/api/datasets').catch(()=>[]);
+  const usable=(datasets||[]).filter(x=>(x.case_count||0)>0);
+  evalOpenModal('对比测试','开始对比',`<div class="eval-form">
+    <div class="field"><label>数据集（可选）</label><select class="select" style="width:100%" name="dataset_id"><option value="">不用数据集，只跑下面的问题</option>${usable.map(x=>`<option value="${x.id}">${escapeHtml(x.name)} · ${x.case_count||0} 条</option>`).join('')}</select></div>
+    <div class="field"><label>评分方式</label><select class="select" style="width:100%" name="scorer"><option value="contains">包含匹配</option><option value="exact">完全匹配</option><option value="regex">正则</option></select></div>
+    <div class="field"><label>最多对比条数</label><input type="number" name="case_limit" min="1" max="12" value="6"></div>
+    <div class="field wide"><label>测试问题（每行一条；要通过率写成 问题 || 期望）</label><textarea name="prompts" class="skill-md" placeholder="你好，介绍一下你自己 || 助手&#10;帮我查一下今天天气 || 天气"></textarea></div>
+  </div>`,'exp-compare',true);
+  $('#modalEyebrow').textContent='A/B 实验';
+  $('#modalForm').dataset.id=String(id);
+}
+async function expSubmitCompare(form){
+  const id=form.dataset.id;
+  const data=Object.fromEntries(new FormData(form));
+  const prompts=String(data.prompts||'').split('\n').map(x=>x.trim()).filter(Boolean);
+  if(!data.dataset_id && !prompts.length){toast('请选择数据集，或至少写一条测试问题');return}
+  const payload={scorer:data.scorer||'contains',prompts,case_limit:Number(data.case_limit||6)};
+  if(data.dataset_id) payload.dataset_id=Number(data.dataset_id);
+  const btn=resetModalSubmit('对比中…');
+  btn.disabled=true;
+  try{
+    const row=await api(`/api/experiments/${id}/compare`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    $('#modal').close();
+    toast(row.winner?`对比完成，当前领先 ${row.winner}`:'对比完成');
+    expState.id=String(id);
+    await render('experiments');
+  }finally{
+    resetModalSubmit('开始对比');
+  }
+}
 async function traces(){return studio()}
 async function studio(){
   const obs=await api('/api/observability').catch(()=>({studio:{}}));
@@ -493,14 +716,16 @@ async function studio(){
 }
 let pgCatalog={agents:[],models:[],mcps:[],skills:[]};
 async function playground(selectedAgent=''){
-  const [agents,allModels,mcps,skills]=await Promise.all([api('/api/agents'),api('/api/models'),api('/api/mcp'),api('/api/skills')]);
+  const [agents,allModels,mcps,skills,expRows]=await Promise.all([api('/api/agents'),api('/api/models'),api('/api/mcp'),api('/api/skills'),api('/api/experiments').catch(()=>[])]);
   const models=allModels.filter(x=>x.enabled);
   const liveMcps=(mcps||[]).filter(x=>x.enabled!==false);
   const liveSkills=(skills||[]).filter(x=>x.enabled!==false);
-  pgCatalog={agents,models,mcps:liveMcps,skills:liveSkills};
+  const runningExps=(expRows||[]).filter(x=>x.status==='running');
+  pgCatalog={agents,models,mcps:liveMcps,skills:liveSkills,experiments:runningExps};
   if(selectedAgent) chatState.agentId=String(selectedAgent);
   if(!chatState.agentId && agents[0]) chatState.agentId=String(agents[0].id);
   if(!chatState.modelId && models[0]) chatState.modelId=String(models[0].id);
+  if(chatState.experimentId && !runningExps.some(x=>String(x.id)===String(chatState.experimentId))) chatState.experimentId='';
   await restoreAgentChat(chatState.agentId);
   const agent=agents.find(x=>String(x.id)===String(chatState.agentId))||agents[0];
   const model=models.find(x=>String(x.id)===String(chatState.modelId))||models[0];
@@ -509,7 +734,10 @@ async function playground(selectedAgent=''){
   <div class="pg-toolbar">
     <label>Agent<select id="runAgent" class="select">${agents.map(x=>`<option value="${x.id}" ${String(x.id)===String(agent&&agent.id)?'selected':''}>${x.name}</option>`).join('')}</select></label>
     <label>模型<select id="runModel" class="select">${models.map(x=>`<option value="${x.id}" ${String(x.id)===String(model&&model.id)?'selected':''}>${x.name}</option>`).join('')}</select></label>
+    <label>A/B 实验<select id="runExperiment" class="select"><option value="">不分流</option>${runningExps.map(x=>`<option value="${x.id}" ${String(x.id)===String(chatState.experimentId)?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}</select></label>
+    <label id="runUserWrap" hidden>用户 ID<input id="runUserKey" value="${escapeHtml(chatState.experimentUserKey||'')}" placeholder="例如 u_1001" style="min-width:120px"></label>
     <div class="pg-bind" id="pgBindHint"></div>
+    <div class="exp-hint" id="expHint"></div>
     ${models.length?'':`<div class="inline-warning">没有已启用的模型，请先到模型配置中启用。</div>`}
   </div>
   <div class="pg-split">
@@ -964,6 +1192,35 @@ async function openUserEdit(id){
   $('#modal').showModal();
 }
 async function removeResource(page,id){const row=resourceStore[page]&&resourceStore[page][id];const name=(row&&row.name)||'该配置';if(!confirm(`确定删除「${name}」吗？此操作不可恢复。`))return;try{await api(`/api/${page}/${id}`,{method:'DELETE'});await afterChange(page,'配置已删除')}catch(e){toast('删除失败，请稍后重试')}}
+async function copyAgent(id){
+  try{
+    const row=await api(`/api/agents/${id}/copy`,{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    await afterChange('agents',`已复制为「${row.name}」`);
+  }catch(err){toast(apiError(err)||'复制失败')}
+}
+function openRenameAgent(id){
+  const row=resourceStore.agents&&resourceStore.agents[id];
+  if(!row){toast('未找到该 Agent');return}
+  $('#modalEyebrow').textContent='Agent 管理';
+  $('#modalTitle').textContent='重命名 Agent';
+  resetModalSubmit('保存名称');
+  $('#modal').classList.remove('modal-wide');
+  $('#modalFields').innerHTML=`<div class="field"><label>名称</label><input name="name" required minlength="2" maxlength="80" value="${escapeHtml(row.name)}"></div>`;
+  $('#modalForm').dataset.page='agent-rename';
+  $('#modalForm').dataset.id=String(row.id);
+  $('#modalForm').noValidate=true;
+  $('#modal').showModal();
+  const input=$('#modalForm [name="name"]');
+  if(input){input.focus();input.select()}
+}
+async function submitRenameAgent(form){
+  const id=form.dataset.id;
+  const name=String(Object.fromEntries(new FormData(form)).name||'').trim();
+  if(name.length<2){toast('名称至少 2 个字符');return}
+  const row=await api(`/api/agents/${id}/rename`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name})});
+  $('#modal').close();
+  await afterChange('agents',`已重命名为「${row.name}」`);
+}
 async function openForm(page,row){
   if(!forms[page]){toast('已进入新建向导');return}
   const editing=!!row;
@@ -1018,6 +1275,10 @@ $('#modalForm').addEventListener('submit',async e=>{
   e.preventDefault();
   const form=e.currentTarget,page=form.dataset.page,id=form.dataset.id,data=Object.fromEntries(new FormData(form));
   if(page==='preview'){ $('#modal').close(); return; }
+  if(page==='agent-rename'){
+    try{await submitRenameAgent(form)}catch(err){toast(apiError(err)||'重命名失败')}
+    return;
+  }
   if(page==='eval-dataset'){
     try{await evalSubmitDataset(form)}catch(err){toast(apiError(err)||'创建数据集失败')}
     return;
@@ -1028,6 +1289,14 @@ $('#modalForm').addEventListener('submit',async e=>{
   }
   if(page==='evaluations'){
     try{await evalLaunchFromForm(form)}catch(err){toast(apiError(err)||'创建测试失败，请检查 Agent 与数据集')}
+    return;
+  }
+  if(page==='exp-compare'){
+    try{await expSubmitCompare(form)}catch(err){toast(apiError(err)||'对比测试失败')}
+    return;
+  }
+  if(page==='experiments'){
+    try{await expSubmit(form)}catch(err){toast(apiError(err)||'保存实验失败')}
     return;
   }
   if(page==='agents'){
@@ -1171,7 +1440,7 @@ async function testSandbox(id){
 async function toggleEnabled(page,id,enabled){try{await api(`/api/${page}/${id}/status`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});await afterChange(page, enabled?'已启用':'已停用')}catch(e){toast('状态修改失败，请稍后重试')}}
 function openPlayground(agentId){chatState.agentId=String(agentId);render('playground',agentId)}
 function escapeHtml(value){const el=document.createElement('div');el.textContent=String(value??'');return el.innerHTML}
-const chatState={sessionId:'',messages:[],agentId:'',modelId:'',spans:[],traceId:'',latencyMs:0,mode:'',workspace:''};
+const chatState={sessionId:'',messages:[],agentId:'',modelId:'',spans:[],traceId:'',latencyMs:0,mode:'',workspace:'',experimentId:'',experimentUserKey:''};
 function chatKey(agentId){return 'pg_chat_'+(agentId||chatState.agentId||'default')}
 function persistChat(){if(!chatState.agentId)return;sessionStorage.setItem(chatKey(chatState.agentId),JSON.stringify(chatState))}
 function loadChat(agentId){try{const saved=JSON.parse(sessionStorage.getItem(chatKey(agentId||chatState.agentId))||'{}');if(saved&&typeof saved==='object')Object.assign(chatState,{sessionId:saved.sessionId||'',messages:Array.isArray(saved.messages)?saved.messages:[],agentId:String(agentId||saved.agentId||chatState.agentId||''),modelId:saved.modelId||chatState.modelId,spans:Array.isArray(saved.spans)?saved.spans:[],traceId:saved.traceId||'',latencyMs:saved.latencyMs||0,mode:saved.mode||'',workspace:saved.workspace||''})}catch(e){}}
@@ -1249,7 +1518,12 @@ function syncChatHeader(){
   if(model&&model.selectedOptions[0]&&$('#chatPeerMeta'))$('#chatPeerMeta').textContent=model.selectedOptions[0].textContent;
   syncBindHint();
 }
-function resetChat(){chatState.sessionId='';chatState.messages=[];chatState.spans=[];chatState.traceId='';chatState.latencyMs=0;chatState.mode='';persistChat();paintChat();paintTrace();const state=$('#runState');if(state){state.className='pill draft';state.textContent='待发送'}}
+function resetChat(){chatState.sessionId='';chatState.messages=[];chatState.spans=[];chatState.traceId='';chatState.latencyMs=0;chatState.mode='';persistChat();paintChat();paintTrace();paintExpHint(null);const state=$('#runState');if(state){state.className='pill draft';state.textContent='待发送'}}
+function paintExpHint(info){
+  const el=$('#expHint'); if(!el) return;
+  if(!info||info.holdout){el.textContent=info&&info.holdout?'当前会话未进组，仍走所选 Agent':'';return}
+  if(info.variant_key) el.textContent=`当前分流到变体 ${info.variant_key} · ${info.variant_name||''} · ${info.agent_name||''}`;
+}
 async function runPlayground(){
   const button=$('#runButton'),state=$('#runState'),input=$('#runMessage'),log=$('#chatLog');
   if(!button||!input||!log)return;
@@ -1265,7 +1539,10 @@ async function runPlayground(){
   chatState.spans=[{title:'接收用户消息',kind:'input',status:'ok'},{title:'调用模型',kind:'llm',status:'ok',detail:'正在生成回复…'}];
   paintTrace();
   try{
-    const r=await api('/api/playground/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_id:Number($('#runAgent').value),model_config_id:Number($('#runModel').value),message,session_id:chatState.sessionId||undefined})});
+    const payload={agent_id:Number($('#runAgent').value),model_config_id:Number($('#runModel').value),message,session_id:chatState.sessionId||undefined};
+    if($('#runExperiment')&&$('#runExperiment').value) payload.experiment_id=Number($('#runExperiment').value);
+    if($('#runUserKey')&&$('#runUserKey').value.trim()){payload.user_key=$('#runUserKey').value.trim();chatState.experimentUserKey=payload.user_key}
+    const r=await api('/api/playground/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     const reply=r.reply||r.output||r.response||'没有返回内容';
     chatState.sessionId=r.session_id||chatState.sessionId;
     chatState.traceId=r.trace_id||'';
@@ -1276,7 +1553,9 @@ async function runPlayground(){
     chatState.messages.push({role:'assistant',content:reply,agent:r.agent||currentAgentName(),error:r.mode==='error'});
     persistChat();
     if(state){state.className=r.mode==='error'?'pill failed':r.mode==='ready'?'pill completed':'pill queued';state.textContent=r.mode==='ready'?'已回复':r.mode==='error'?'调用失败':'预览回复'}
-    paintChat();paintTrace();
+    paintExpHint(r.experiment);
+    if(r.agent_id){chatState.agentId=String(r.agent_id);if($('#runAgent'))$('#runAgent').value=String(r.agent_id)}
+    paintChat();paintTrace();syncChatHeader();
   }catch(e){
     chatState.messages.push({role:'assistant',content:e.message||'没有获得返回，请检查 Agent 与模型配置',agent:currentAgentName(),error:true});
     chatState.spans=[{title:'调用失败',kind:'output',status:'error',detail:e.message||'请求未成功'}];
@@ -1286,7 +1565,15 @@ async function runPlayground(){
 function bindPage(page){
   evalStopPoll();
   if(page==='evaluations') bindEvalPage();
-  if(page==='sessions'){const runFilter=async()=>{const p=new URLSearchParams();const q=$('#sessionQ').value.trim(),a=$('#agentFilter').value,s=$('#statusFilter').value;if(q)p.set('q',q);if(a)p.set('agent_name',a);if(s)p.set('status',s);const rows=await api('/api/sessions?'+p);$('#sessionResults').innerHTML=sessionTable(rows).replace('<section class="panel wide-panel">','<section>');closeSessionDetail()};$('#doFilter').onclick=runFilter;$('#sessionQ').onkeydown=e=>{if(e.key==='Enter')runFilter()};$('#sessionResults').onclick=e=>{const hit=e.target.closest('[data-session-id]');if(hit)openSessionDetail(hit.dataset.sessionId)}}if(page==='playground'){paintChat();paintTrace();syncChatHeader();const form=$('#chatForm'),input=$('#runMessage');if(form)form.onsubmit=e=>{e.preventDefault();runPlayground()};if(input){input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();runPlayground()}});input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(120,input.scrollHeight)+'px'})}const agentSel=$('#runAgent'),modelSel=$('#runModel');if(agentSel)agentSel.onchange=async()=>{if(String(chatState.agentId)!==agentSel.value){await restoreAgentChat(agentSel.value);paintChat();paintTrace()}syncChatHeader()};if(modelSel)modelSel.onchange=()=>{chatState.modelId=modelSel.value;persistChat();syncChatHeader()};if($('#clearChat'))$('#clearChat').onclick=resetChat;input&&input.focus()}if(page==='workflows') bindWorkflowCanvas()}
+  if(page==='experiments') bindExpPage();
+  if(page==='sessions'){const runFilter=async()=>{const p=new URLSearchParams();const q=$('#sessionQ').value.trim(),a=$('#agentFilter').value,s=$('#statusFilter').value;if(q)p.set('q',q);if(a)p.set('agent_name',a);if(s)p.set('status',s);const rows=await api('/api/sessions?'+p);$('#sessionResults').innerHTML=sessionTable(rows).replace('<section class="panel wide-panel">','<section>');closeSessionDetail()};$('#doFilter').onclick=runFilter;$('#sessionQ').onkeydown=e=>{if(e.key==='Enter')runFilter()};$('#sessionResults').onclick=e=>{const hit=e.target.closest('[data-session-id]');if(hit)openSessionDetail(hit.dataset.sessionId)}}if(page==='playground'){paintChat();paintTrace();syncChatHeader();const form=$('#chatForm'),input=$('#runMessage');if(form)form.onsubmit=e=>{e.preventDefault();runPlayground()};if(input){input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();runPlayground()}});input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(120,input.scrollHeight)+'px'})}const agentSel=$('#runAgent'),modelSel=$('#runModel');if(agentSel)agentSel.onchange=async()=>{if(String(chatState.agentId)!==agentSel.value){await restoreAgentChat(agentSel.value);paintChat();paintTrace()}syncChatHeader()};if(modelSel)modelSel.onchange=()=>{chatState.modelId=modelSel.value;persistChat();syncChatHeader()};const expSel=$('#runExperiment');if(expSel)expSel.onchange=()=>{chatState.experimentId=expSel.value;resetChat();syncExpUserField()};const userKey=$('#runUserKey');if(userKey)userKey.onchange=()=>{chatState.experimentUserKey=userKey.value.trim()};syncExpUserField();if($('#clearChat'))$('#clearChat').onclick=resetChat;input&&input.focus()}if(page==='workflows') bindWorkflowCanvas()}
+function syncExpUserField(){
+  const wrap=$('#runUserWrap');
+  if(!wrap) return;
+  const exp=(pgCatalog.experiments||[]).find(x=>String(x.id)===String(($('#runExperiment')&&$('#runExperiment').value)||chatState.experimentId));
+  const userBased=!!exp && (exp.assignment_strategy==='user_hash'||exp.assignment_strategy==='user_first'||exp.assignment_unit==='user');
+  wrap.hidden=!userBased;
+}
 let renderSeq=0;
 async function render(page,param=''){
   if(page==='traces')page='studio';
@@ -1302,6 +1589,7 @@ async function render(page,param=''){
     else if(page==='sessions')html=await sessions();
     else if(page==='studio')html=await studio();
     else if(page==='evaluations')html=await evaluations();
+    else if(page==='experiments')html=await experiments();
     else if(page==='playground')html=await playground(param);
     else if(page==='roles')html=await iam();
     else html=await resources(page);
@@ -1333,6 +1621,10 @@ if($('#loginForm')) $('#loginForm').onsubmit=async e=>{
     render('dashboard');
   }catch(err){showLogin(err.message||'登录失败')}
 };
+document.addEventListener('click', e=>{
+  if(e.target.closest('.card-menu-item') || !e.target.closest('.card-menu')) closeCardMenus();
+});
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeCardMenus(); });
 async function boot(){
   if(!authState.token){showLogin();return}
   try{

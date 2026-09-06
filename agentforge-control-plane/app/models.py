@@ -236,3 +236,49 @@ class ChatMessage(Base, TimestampMixin, TenantOwnedMixin):
     content: Mapped[str] = mapped_column(Text, default="")
     agent_name: Mapped[str] = mapped_column(String(80), default="")
 
+
+class Experiment(Base, TimestampMixin, TenantOwnedMixin):
+    __tablename__ = "experiments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(120), index=True)
+    description: Mapped[str] = mapped_column(String(300), default="")
+    status: Mapped[str] = mapped_column(String(24), default="draft", index=True)
+    assignment_unit: Mapped[str] = mapped_column(String(24), default="session")
+    assignment_strategy: Mapped[str] = mapped_column(String(32), default="session_hash")
+    traffic_percent: Mapped[int] = mapped_column(Integer, default=100)
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
+    last_compare: Mapped[Optional[dict[str, Any]]] = mapped_column(JSON, default=None)
+
+
+class ExperimentVariant(Base, TimestampMixin, TenantOwnedMixin):
+    __tablename__ = "experiment_variants"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    experiment_id: Mapped[int] = mapped_column(Integer, index=True)
+    key: Mapped[str] = mapped_column(String(16), default="A")
+    name: Mapped[str] = mapped_column(String(80), default="")
+    agent_id: Mapped[int] = mapped_column(Integer, index=True)
+    weight: Mapped[int] = mapped_column(Integer, default=50)
+
+
+class ExperimentAssignment(Base, TimestampMixin, TenantOwnedMixin):
+    __tablename__ = "experiment_assignments"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    experiment_id: Mapped[int] = mapped_column(Integer, index=True)
+    variant_id: Mapped[int] = mapped_column(Integer, index=True)
+    unit_key: Mapped[str] = mapped_column(String(120), index=True)
+    holdout: Mapped[bool] = mapped_column(Boolean, default=False)
+
+
+class ExperimentEvent(Base, TimestampMixin, TenantOwnedMixin):
+    __tablename__ = "experiment_events"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    experiment_id: Mapped[int] = mapped_column(Integer, index=True)
+    variant_id: Mapped[Optional[int]] = mapped_column(Integer, index=True, default=None)
+    session_id: Mapped[str] = mapped_column(String(80), default="", index=True)
+    unit_key: Mapped[str] = mapped_column(String(120), default="")
+    kind: Mapped[str] = mapped_column(String(24), default="run")
+    status: Mapped[str] = mapped_column(String(24), default="ok")
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    tokens: Mapped[int] = mapped_column(Integer, default=0)
+

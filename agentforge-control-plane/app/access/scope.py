@@ -39,6 +39,7 @@ def attach_access(data: dict, row: Any, user: CurrentUser | None = None) -> dict
         "sandbox_policies": ResourceKind.SANDBOX,
         "datasets": ResourceKind.DATASET,
         "evaluation_runs": ResourceKind.EVALUATION,
+        "experiments": ResourceKind.EXPERIMENT,
         "conversations": ResourceKind.SESSION,
         "traces": ResourceKind.TRACE,
         "roles": ResourceKind.ROLE,

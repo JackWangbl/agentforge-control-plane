@@ -41,7 +41,12 @@ def initialize_agentscope() -> bool:
         kwargs["studio_url"] = agentscope_studio_url()
         if tracing_url := os.getenv("OTEL_EXPORTER_OTLP_ENDPOINT"):
             kwargs["tracing_url"] = tracing_url
-        agentscope.init(**kwargs)
+        # AgentScope 2.x no longer exposes the legacy top-level ``init`` API.
+        # Importing the package is sufficient for the integrations used by this
+        # control plane; retain the call for older compatible releases.
+        initializer = getattr(agentscope, "init", None)
+        if callable(initializer):
+            initializer(**kwargs)
         return True
     except ImportError:
         return False
@@ -129,4 +134,3 @@ def http_error_detail(response: Any) -> str:
         return (response.text or str(response.status_code))[:500]
     except Exception:
         return (getattr(response, "text", None) or str(getattr(response, "status_code", "")))[:500]
-

@@ -411,3 +411,67 @@ def test_agent_prompt_tools_and_skills_roundtrip():
         assert client.get(f"/api/agents/{body['id']}/workspace").json()["session_count"] >= 1
         assert client.delete(f"/api/agents/{body['id']}").status_code == 200
         assert client.get(f"/api/agents/{body['id']}/workspace").status_code == 404
+
+
+def test_copy_agent_clones_bindings_and_workspace():
+    suffix = uuid4().hex[:8]
+    with TestClient(app) as client:
+        source = client.post("/api/agents", json={
+            "name": f"源助手{suffix}",
+            "model_name": "Qwen-Max",
+            "description": "用于复制",
+            "system_prompt": "你是对照组。",
+            "status": "published",
+            "skill_ids": [1],
+            "mcp_ids": [1],
+        })
+        assert source.status_code == 201, source.text
+        source_id = source.json()["id"]
+        copied = client.post(f"/api/agents/{source_id}/copy")
+        assert copied.status_code == 201, copied.text
+        body = copied.json()
+        assert body["id"] != source_id
+        assert body["name"] == f"源助手{suffix} 副本"
+        assert body["status"] == "draft"
+        assert body["system_prompt"] == "你是对照组。"
+        assert body["skill_ids"] == [1]
+        assert body["mcp_ids"] == [1]
+        assert body["workspace"]
+        assert body["workspace"] != source.json()["workspace"]
+        again = client.post(f"/api/agents/{source_id}/copy", json={"name": f"源助手{suffix} 副本"})
+        assert again.status_code == 201
+        assert again.json()["name"] == f"源助手{suffix} 副本 2"
+        client.delete(f"/api/agents/{source_id}")
+        client.delete(f"/api/agents/{body['id']}")
+        client.delete(f"/api/agents/{again.json()['id']}")
+
+
+def test_rename_agent_updates_name_keeps_workspace():
+    suffix = uuid4().hex[:8]
+    with TestClient(app) as client:
+        created = client.post("/api/agents", json={
+            "name": f"改名前{suffix}",
+            "model_name": "Qwen-Max",
+            "description": "用于重命名",
+        })
+        other = client.post("/api/agents", json={
+            "name": f"占用名{suffix}",
+            "model_name": "Qwen-Max",
+        })
+        assert created.status_code == 201, created.text
+        assert other.status_code == 201, other.text
+        item_id = created.json()["id"]
+        workspace = created.json()["workspace"]
+        conflict = client.post(f"/api/agents/{item_id}/rename", json={"name": f"占用名{suffix}"})
+        assert conflict.status_code == 409
+        same = client.post(f"/api/agents/{item_id}/rename", json={"name": f"改名前{suffix}"})
+        assert same.status_code == 200
+        assert same.json()["name"] == f"改名前{suffix}"
+        renamed = client.post(f"/api/agents/{item_id}/rename", json={"name": f"改名后{suffix}"})
+        assert renamed.status_code == 200, renamed.text
+        assert renamed.json()["name"] == f"改名后{suffix}"
+        assert renamed.json()["workspace"] == workspace
+        listed = client.get("/api/agents").json()
+        assert any(row["id"] == item_id and row["name"] == f"改名后{suffix}" for row in listed)
+        client.delete(f"/api/agents/{item_id}")
+        client.delete(f"/api/agents/{other.json()['id']}")
