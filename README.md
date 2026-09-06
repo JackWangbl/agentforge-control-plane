@@ -1,5 +1,6 @@
 # AgentForge Control Plane
-<img width="3020" height="1776" alt="image" src="https://github.com/user-attachments/assets/7f367f6a-e962-41ca-8a97-3524ec9e4308" />
+![Uploading image.png…]()
+
 
 
 适用于小白学习agent有关知识，了解agent的基本生态
