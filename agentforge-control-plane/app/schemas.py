@@ -150,6 +150,15 @@ class PlaygroundRun(BaseModel):
     user_key: Optional[str] = Field(default=None, max_length=120)
 
 
+class PlaygroundResume(BaseModel):
+    agent_id: int
+    model_config_id: int
+    session_id: str = Field(min_length=1, max_length=120)
+    experiment_id: Optional[int] = None
+    user_key: Optional[str] = Field(default=None, max_length=120)
+    force_rerun_tools: bool = False
+
+
 class ExperimentVariantIn(BaseModel):
     key: str = ""
     name: str = ""

@@ -41,16 +41,21 @@ from app.schemas import (
     SkillUpdate,
     WorkflowCreate,
     WorkflowUpdate,
+    PlaygroundResume,
     PlaygroundRun,
     ResourceStatusUpdate,
 )
 from app.services.agent_workspace import (
+    checkpoint_public,
+    clear_checkpoint,
     ensure_workspace,
     ensure_workspaces,
+    load_checkpoint,
     load_session,
     new_trace_id,
     persist_run,
     remove_workspace,
+    save_checkpoint,
     workspace_status,
 )
 from app.services.langfuse_tracer import observability_status, public_trace_url
@@ -287,7 +292,16 @@ def build_debug_spans(agent: Agent, model: ModelConfig, mode: str, tool_spans: l
     return spans
 
 
-def generate_chat_reply(agent: Agent, model: ModelConfig, history: list[dict[str, Any]], db: Session) -> tuple[str, str, list[dict[str, Any]], dict[str, Any]]:
+def generate_chat_reply(
+    agent: Agent,
+    model: ModelConfig,
+    history: list[dict[str, Any]],
+    db: Session,
+    *,
+    session_id: Optional[str] = None,
+    resume: bool = False,
+    force_rerun_tools: bool = False,
+) -> tuple[str, str, list[dict[str, Any]], dict[str, Any]]:
     credential = resolve_model_credential(model)
     last_user = next((item["content"] for item in reversed(history) if item.get("role") == "user"), "")
     system_prompt = build_system_prompt(agent, db)
@@ -310,11 +324,76 @@ def generate_chat_reply(agent: Agent, model: ModelConfig, history: list[dict[str
         if ("几点" in last_user or "时间" in last_user or "日期" in last_user) and agent_allows_tool(agent, db, "get_current_time"):
             extra = execute_tool("get_current_time", {})
             tool_spans.append(debug_span("mcp.get_current_time", "调用工具 get_current_time", "tool", duration_ms=6, detail=extra))
+        if session_id:
+            clear_checkpoint(agent, session_id)
         return preview_chat_reply(agent, last_user, extra), "preview", tool_spans, {}
-    working = [dict(item) for item in history]
-    traces: list[dict[str, Any]] = []
-    usage: dict[str, Any] = {}
+    ckpt = load_checkpoint(agent, session_id) if resume and session_id else None
+    if resume:
+        if not ckpt or not ckpt.get("working"):
+            raise HTTPException(409, "没有可恢复的检查点")
+        if ckpt.get("status") not in {"failed", "running"}:
+            raise HTTPException(409, "当前检查点已经结束，不能续跑")
+        working = [dict(item) for item in ckpt.get("working") or []]
+        traces = list(ckpt.get("traces") or [])
+        usage = dict(ckpt.get("usage") or {})
+        pending = list(ckpt.get("pending_tools") or [])
+        done_ids = set(ckpt.get("done_tool_ids") or [])
+        next_action = ckpt.get("next") or "llm"
+        step = int(ckpt.get("step") or 0)
+        run_id = ckpt.get("run_id") or new_trace_id()
+        last_user = ckpt.get("last_user") or last_user
+    else:
+        working = [dict(item) for item in history]
+        traces = []
+        usage = {}
+        pending = []
+        done_ids = set()
+        next_action = "llm"
+        step = 0
+        run_id = new_trace_id()
+
+    def flush(status: str, nxt: str, error: str = "") -> None:
+        if not session_id:
+            return
+        save_checkpoint(agent, session_id, {
+            "run_id": run_id,
+            "status": status,
+            "next": nxt,
+            "step": step,
+            "working": working,
+            "pending_tools": pending,
+            "done_tool_ids": list(done_ids),
+            "traces": traces,
+            "usage": usage,
+            "error": error,
+            "last_user": last_user,
+        })
+
+    def run_pending() -> None:
+        nonlocal step
+        for call in list(pending):
+            fn = call.get("function") or {}
+            name = fn.get("name") or "unknown"
+            call_id = call.get("id") or name
+            if call_id in done_ids and not force_rerun_tools:
+                pending[:] = [item for item in pending if (item.get("id") or (item.get("function") or {}).get("name")) != call_id]
+                continue
+            args = parse_tool_arguments(fn.get("arguments"))
+            allowed = agent_allows_tool(agent, db, name)
+            output = execute_tool(name, args, db, agent) if allowed else json.dumps({"error": f"Agent 未绑定工具 {name}"}, ensure_ascii=False)
+            traces.append(debug_span(f"mcp.{name}", f"调用工具 {name}", "tool", status="ok" if allowed else "error", duration_ms=8, detail=output))
+            working.append({"role": "tool", "tool_call_id": call_id, "content": output})
+            done_ids.add(call_id)
+            pending[:] = [item for item in pending if (item.get("id") or (item.get("function") or {}).get("name")) != call_id]
+            step += 1
+            flush("running", "tool" if pending else "llm")
+
     try:
+        flush("running", next_action)
+        if next_action == "tool":
+            run_pending()
+            next_action = "llm"
+            flush("running", "llm")
         rounds = 8 if any((item.get("function") or {}).get("name", "").startswith("browser_") for item in tools) else 4
         for _ in range(rounds):
             result = complete_chat(
@@ -331,21 +410,26 @@ def generate_chat_reply(agent: Agent, model: ModelConfig, history: list[dict[str
             calls = result.get("tool_calls") or []
             if not calls:
                 reply = result.get("content") or preview_chat_reply(agent, last_user)
+                if session_id:
+                    clear_checkpoint(agent, session_id)
                 return reply, "ready", traces, usage
             working.append({"role": "assistant", "content": result.get("content") or "", "tool_calls": calls})
-            for call in calls:
-                fn = call.get("function") or {}
-                name = fn.get("name") or "unknown"
-                args = parse_tool_arguments(fn.get("arguments"))
-                allowed = agent_allows_tool(agent, db, name)
-                output = execute_tool(name, args, db, agent) if allowed else json.dumps({"error": f"Agent 未绑定工具 {name}"}, ensure_ascii=False)
-                traces.append(debug_span(f"mcp.{name}", f"调用工具 {name}", "tool", status="ok" if allowed else "error", duration_ms=8, detail=output))
-                working.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": output})
+            pending = list(calls)
+            step += 1
+            flush("running", "tool")
+            run_pending()
+            next_action = "llm"
+            flush("running", "llm")
+        if session_id:
+            clear_checkpoint(agent, session_id)
         return working[-1].get("content") or preview_chat_reply(agent, last_user), "ready", traces, usage
+    except HTTPException:
+        raise
     except Exception as exc:
         detail = str(exc)
         if credential:
             detail = detail.replace(credential, "****")
+        flush("failed", next_action, detail)
         return f"模型调用失败：{detail}\n\n{preview_chat_reply(agent, last_user)}", "error", traces, usage
 
 
@@ -800,20 +884,120 @@ def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_p
         ]
     history.append({"role": "user", "content": payload.message})
     started = datetime.utcnow()
-    reply, mode, tool_spans, usage = generate_chat_reply(agent, model, history, db)
+    reply, mode, tool_spans, usage = generate_chat_reply(agent, model, history, db, session_id=session_id)
+    return _finalize_playground(
+        db=db,
+        user=user,
+        agent=agent,
+        model=model,
+        session_id=session_id,
+        conversation=conversation,
+        message=payload.message,
+        reply=reply,
+        mode=mode,
+        tool_spans=tool_spans,
+        usage=usage,
+        started=started,
+        include_user=True,
+        operation="POST /api/playground/run",
+        assignment=assignment,
+        experiment=experiment,
+    )
+
+
+@app.post("/api/playground/resume")
+def resume_playground(payload: PlaygroundResume, user: CurrentUser = Depends(require_permission("session:write", "agent:write")), db: Session = Depends(get_db)) -> dict[str, Any]:
+    agent = access_service.get_row(user, ResourceKind.AGENT, payload.agent_id, db)
+    model = access_service.get_row(user, ResourceKind.CREDENTIAL, payload.model_config_id, db)
+    if not model.enabled:
+        raise HTTPException(409, "Selected model config is disabled")
+    ensure_workspace(agent)
+    session_id = payload.session_id
+    ckpt = load_checkpoint(agent, session_id)
+    if not ckpt or ckpt.get("status") not in {"failed", "running"}:
+        raise HTTPException(409, "没有可恢复的检查点")
+    conversation = db.scalar(select(Conversation).where(Conversation.session_id == session_id))
+    if conversation and getattr(conversation, "tenant_id", user.tenant_id) not in (None, user.tenant_id):
+        raise HTTPException(409, "Session belongs to another tenant")
+    if conversation and conversation.agent_id and conversation.agent_id != agent.id:
+        raise HTTPException(409, "Session belongs to another agent workspace")
+    stored = load_session(agent, session_id)
+    if stored and stored.get("agent_id") and stored.get("agent_id") != agent.id:
+        raise HTTPException(409, "Session belongs to another agent workspace")
+    history = [
+        {"role": item.get("role"), "content": item.get("content") or ""}
+        for item in (stored or {}).get("messages") or []
+        if item.get("role") in {"user", "assistant"}
+    ]
+    if not history:
+        last_user = ckpt.get("last_user") or ""
+        if last_user:
+            history = [{"role": "user", "content": last_user}]
+    started = datetime.utcnow()
+    reply, mode, tool_spans, usage = generate_chat_reply(
+        agent,
+        model,
+        history,
+        db,
+        session_id=session_id,
+        resume=True,
+        force_rerun_tools=payload.force_rerun_tools,
+    )
+    return _finalize_playground(
+        db=db,
+        user=user,
+        agent=agent,
+        model=model,
+        session_id=session_id,
+        conversation=conversation,
+        message=ckpt.get("last_user") or "",
+        reply=reply,
+        mode=mode,
+        tool_spans=tool_spans,
+        usage=usage,
+        started=started,
+        include_user=False,
+        operation="POST /api/playground/resume",
+        assignment={},
+        experiment=None,
+    )
+
+
+def _finalize_playground(
+    *,
+    db: Session,
+    user: CurrentUser,
+    agent: Agent,
+    model: ModelConfig,
+    session_id: str,
+    conversation: Optional[Conversation],
+    message: str,
+    reply: str,
+    mode: str,
+    tool_spans: list[dict[str, Any]],
+    usage: dict[str, Any],
+    started: datetime,
+    include_user: bool,
+    operation: str,
+    assignment: dict[str, Any],
+    experiment: Optional[Experiment],
+) -> dict[str, Any]:
     latency_ms = max(1, int((datetime.utcnow() - started).total_seconds() * 1000))
     spans = build_debug_spans(agent, model, mode, tool_spans, latency_ms, db)
-    db.add(stamp_owner(ChatMessage(session_id=session_id, agent_id=agent.id, role="user", content=payload.message, agent_name=agent.name), user))
+    if include_user and message:
+        db.add(stamp_owner(ChatMessage(session_id=session_id, agent_id=agent.id, role="user", content=message, agent_name=agent.name), user))
     db.add(stamp_owner(ChatMessage(session_id=session_id, agent_id=agent.id, role="assistant", content=reply, agent_name=agent.name), user))
-    tokens = max(12, len(payload.message) + len(reply))
+    added = 2 if include_user and message else 1
+    tokens = max(12, (len(message) if include_user else 0) + len(reply))
     if conversation:
-        conversation.message_count += 2
+        conversation.message_count += added
         conversation.total_tokens += tokens
         conversation.latency_ms = latency_ms
         conversation.status = "completed"
         conversation.agent_id = agent.id
         conversation.agent_name = agent.name
-        conversation.title = payload.message[:80]
+        if include_user and message:
+            conversation.title = message[:80]
         conversation.updated_at = datetime.utcnow()
         conversation.tenant_id = conversation.tenant_id or user.tenant_id
         conversation.owner_id = conversation.owner_id or user.id
@@ -824,9 +1008,9 @@ def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_p
             user_id=user.username,
             agent_id=agent.id,
             agent_name=agent.name,
-            title=payload.message[:80],
+            title=(message or reply)[:80],
             status="completed",
-            message_count=2,
+            message_count=added,
             total_tokens=tokens,
             latency_ms=latency_ms,
             channel="Playground",
@@ -838,10 +1022,10 @@ def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_p
         session_id=session_id,
         agent_id=agent.id,
         agent_name=agent.name,
-        operation="POST /api/playground/run",
+        operation=operation,
         status="ok" if mode != "error" else "error",
         duration_ms=latency_ms,
-        input_tokens=int(usage.get("prompt_tokens") or len(payload.message)),
+        input_tokens=int(usage.get("prompt_tokens") or (len(message) if include_user else 0)),
         output_tokens=int(usage.get("completion_tokens") or len(reply)),
         spans=spans,
         langfuse_url="",
@@ -850,8 +1034,8 @@ def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_p
     persisted = persist_run(
         agent=agent,
         session_id=session_id,
-        title=payload.message,
-        message=payload.message,
+        title=message or conversation.title or "resume",
+        message=message,
         reply=reply,
         mode=mode,
         model_name=model.name,
@@ -859,12 +1043,13 @@ def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_p
         spans=spans,
         usage=usage or {},
         latency_ms=latency_ms,
+        include_user=include_user,
     )
     export_playground_to_studio(
         agent_name=agent.name,
         session_id=session_id,
         trace_id=trace_id,
-        message=payload.message,
+        message=message,
         reply=reply,
         mode=mode,
         model_name=model.name,
@@ -872,7 +1057,7 @@ def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_p
         spans=spans,
         usage=usage or {},
         latency_ms=latency_ms,
-        title=payload.message,
+        title=message or conversation.title or "",
     )
     if experiment is not None:
         record_run(
@@ -906,6 +1091,7 @@ def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_p
         "latency_ms": latency_ms,
         "usage": usage,
         "experiment": assignment or None,
+        "checkpoint": checkpoint_public(load_checkpoint(agent, session_id)),
     }
 
 

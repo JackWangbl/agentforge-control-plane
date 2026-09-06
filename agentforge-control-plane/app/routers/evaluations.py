@@ -314,6 +314,33 @@ def list_results(run_id: int, status: str = "", user: CurrentUser = Depends(requ
     return [_dump_result(row) for row in db.scalars(stmt).all()]
 
 
+@router.post("/api/evaluations/{run_id}/resume")
+def resume_evaluation(run_id: int, user: CurrentUser = Depends(require_permission("eval:run")), db: Session = Depends(get_db)) -> dict[str, Any]:
+    run = access_service.resolve_for_edit(user, ResourceKind.EVALUATION, run_id, db)
+    if run.status in {"queued", "running"}:
+        raise HTTPException(409, "任务还在执行，请等待结束或先取消")
+    rows = list(db.scalars(select(EvaluationResult).where(EvaluationResult.run_id == run_id)).all())
+    failed_rows = [item for item in rows if item.status != "passed"]
+    if not failed_rows:
+        raise HTTPException(409, "没有失败用例可以续跑")
+    for item in failed_rows:
+        db.delete(item)
+    kept = [item for item in rows if item.status == "passed"]
+    run.status = "queued"
+    run.passed = len(kept)
+    run.failed = 0
+    run.skipped = 0
+    run.score = round(len(kept) / max(1, run.total or run.cases or len(rows)) * 100, 1) if kept else 0
+    run.error_message = ""
+    run.started_at = None
+    run.finished_at = None
+    db.commit()
+    if run.mode == "online":
+        execute_run(run.id)
+        return _load_run(run_id)
+    return dump_run(run)
+
+
 @router.post("/api/evaluations/{run_id}/run")
 def rerun_evaluation(run_id: int, user: CurrentUser = Depends(require_permission("eval:run")), db: Session = Depends(get_db)) -> dict[str, Any]:
     run = access_service.resolve_for_edit(user, ResourceKind.EVALUATION, run_id, db)

@@ -100,11 +100,19 @@ def execute_run(run_id: int) -> EvaluationRun:
         run.started_at = run.started_at or datetime.utcnow()
         run.error_message = ""
         db.commit()
-        passed = failed = skipped = tokens = latency = 0
+        existing = list(db.scalars(select(EvaluationResult).where(EvaluationResult.run_id == run_id)).all())
+        done_ids = {row.case_id for row in existing}
+        passed = sum(1 for row in existing if row.status == "passed")
+        failed = sum(1 for row in existing if row.status not in {"passed", "skipped"})
+        skipped = sum(1 for row in existing if row.status == "skipped")
+        tokens = sum(int(row.tokens or 0) for row in existing)
+        latency = sum(int(row.latency_ms or 0) for row in existing)
         for case in cases:
             db.refresh(run)
             if run.status == "cancelled":
                 break
+            if case.id in done_ids:
+                continue
             result = _run_one_case(
                 db,
                 run=run,

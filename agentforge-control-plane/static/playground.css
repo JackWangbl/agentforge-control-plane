@@ -37,11 +37,53 @@
 .btn:disabled { opacity: .45; cursor: not-allowed; box-shadow: none; }
 .inline-warning { margin-top: 8px; padding: 9px 11px; border-radius: 7px; background: #fff5df; color: #9a6914; font-size: 10px; }
 .wechat-shell { display: flex; flex-direction: column; height: calc(100vh - 148px); min-height: 540px; background: #ededed; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
-.pg-shell { display: flex; flex-direction: column; height: calc(100vh - 148px); min-height: 560px; background: #fff; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+.pg-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  align-items: flex-end;
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.pg-field {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  flex: 1 1 200px;
+  min-width: 180px;
+  max-width: 340px;
+  color: #66707d;
+  font-size: 11px;
+  font-weight: 600;
+}
+.pg-field[hidden] { display: none !important; }
+.pg-field .select,
+.pg-field input {
+  width: 100%;
+  min-width: 0;
+  background: #fff;
+}
+.pg-bind {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 100%;
+  color: #7b8694;
+  font-size: 11px;
+}
+.pg-controls .exp-hint,
+.pg-controls .inline-warning { flex: 1 1 100%; margin: 0; }
+.pg-shell { display: flex; flex-direction: column; height: calc(100vh - 268px); min-height: 420px; background: #fff; border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); }
+#resumeChat { border-color: #f1d0d0; color: #b23b3b; }
+#resumeChat:hover { background: #fff6f6; }
 .pg-toolbar, .wechat-toolbar { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; padding: 10px 14px; background: #fff; border-bottom: 1px solid var(--line); }
 .pg-toolbar label, .wechat-toolbar label { display: flex; align-items: center; gap: 8px; color: #66707d; font-size: 11px; font-weight: 600; }
 .pg-toolbar .select, .wechat-toolbar .select { min-width: 160px; background: #fff; }
-.pg-bind { margin-left: auto; display: flex; align-items: center; gap: 8px; color: #7b8694; font-size: 11px; }
 .pg-split { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; }
 .wechat-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; background: #f3f5f8; }
 .pg-trace { min-width: 0; display: flex; flex-direction: column; background: #fbfcfe; border-left: 1px solid var(--line); }
@@ -319,9 +361,11 @@ input[type="checkbox"], input[type="radio"] {
   .pg-split { grid-template-columns: 1fr; grid-template-rows: minmax(280px, 1fr) 240px; }
   .pg-trace { border-left: 0; border-top: 1px solid var(--line); }
   .pg-bind { margin-left: 0; width: 100%; }
+  .pg-field { max-width: none; }
   .pg-bind .bind-link { grid-column: auto; grid-row: auto; }
 }
 @media (max-width: 900px) {
-  .wechat-shell, .pg-shell { height: calc(100vh - 128px); }
+  .wechat-shell { height: calc(100vh - 128px); }
+  .pg-shell { height: calc(100vh - 240px); min-height: 360px; }
   .wx-col { max-width: 82%; }
 }

@@ -247,7 +247,7 @@ function evalDatasetsHtml(){
 }
 function evalRunsHtml(){
   const rows=evalState.catalog.runs||[];
-  const body=rows.length?rows.map(x=>`<tr><td><b>${escapeHtml(x.name)}</b><br><small>${x.mode==='online'?'在线抽检':'离线回归'} · ${scorerLabel[x.scorer]||x.scorer}</small></td><td>${escapeHtml(x.dataset||'')}</td><td>${escapeHtml(x.agent_name||'')}</td><td>${pill(x.status)}</td><td>${x.passed||0}/${x.total||x.cases||0}</td><td><b style="color:${x.score>=80?'#16a56a':'#e49b18'}">${x.status==='completed'?(x.score+'%'):'—'}</b></td><td><button class="btn ghost" onclick="evalOpenReport(${x.id})">报告</button> <button class="btn ghost" onclick="evalRerun(${x.id})">重跑</button>${x.status==='running'||x.status==='queued'?` <button class="btn ghost" onclick="evalCancel(${x.id})">取消</button>`:''}</td></tr>`).join(''):`<tr><td class="session-empty" colspan="7">还没有测试任务。导入数据集后点右上角创建测试。</td></tr>`;
+    const body=rows.length?rows.map(x=>`<tr><td><b>${escapeHtml(x.name)}</b><br><small>${x.mode==='online'?'在线抽检':'离线回归'} · ${scorerLabel[x.scorer]||x.scorer}</small></td><td>${escapeHtml(x.dataset||'')}</td><td>${escapeHtml(x.agent_name||'')}</td><td>${pill(x.status)}</td><td>${x.passed||0}/${x.total||x.cases||0}</td><td><b style="color:${x.score>=80?'#16a56a':'#e49b18'}">${x.status==='completed'?(x.score+'%'):'—'}</b></td><td><button class="btn ghost" onclick="evalOpenReport(${x.id})">报告</button> <button class="btn ghost" onclick="evalRerun(${x.id})">重跑</button>${(x.failed||0)>0&&x.status!=='running'&&x.status!=='queued'?` <button class="btn ghost" onclick="evalResume(${x.id})">续跑失败</button>`:''}${x.status==='running'||x.status==='queued'?` <button class="btn ghost" onclick="evalCancel(${x.id})">取消</button>`:''}</td></tr>`).join(''):`<tr><td class="session-empty" colspan="7">还没有测试任务。导入数据集后点右上角创建测试。</td></tr>`;
   return `<section class="panel"><table class="data-table"><thead><tr><th>测试任务</th><th>数据集</th><th>Agent</th><th>状态</th><th>进度</th><th>通过率</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></section>`;
 }
 function evalReportHtml(){
@@ -475,7 +475,7 @@ async function evalLoadReport(id){
     const idx=(evalState.catalog.runs||[]).findIndex(x=>x.id===id);
     if(idx>=0) evalState.catalog.runs[idx]=run;
     const running=run.status==='running'||run.status==='queued';
-    main.innerHTML=`<div class="eval-toolbar"><div><b>${escapeHtml(run.name)}</b><div class="muted">${escapeHtml(run.agent_name)} · ${escapeHtml(run.dataset)} · ${scorerLabel[run.scorer]||run.scorer} · ${pill(run.status)}</div></div><a class="btn ghost" href="/api/evaluations/${run.id}/export.csv">导出 CSV</a><button class="btn ghost" onclick="evalRerun(${run.id})">按同样配置重跑</button></div>
+    main.innerHTML=`<div class="eval-toolbar"><div><b>${escapeHtml(run.name)}</b><div class="muted">${escapeHtml(run.agent_name)} · ${escapeHtml(run.dataset)} · ${scorerLabel[run.scorer]||run.scorer} · ${pill(run.status)}</div></div><a class="btn ghost" href="/api/evaluations/${run.id}/export.csv">导出 CSV</a><button class="btn ghost" onclick="evalRerun(${run.id})">按同样配置重跑</button>${(run.failed||0)>0&&!running?`<button class="btn ghost" onclick="evalResume(${run.id})">从失败续跑</button>`:''}</div>
     <div class="eval-metrics">
       <div class="eval-metric"><span>通过率</span><b>${run.status==='completed'||run.judged?run.score+'%':'—'}</b></div>
       <div class="eval-metric"><span>通过 / 失败 / 跳过</span><b>${run.passed||0} / ${run.failed||0} / ${run.skipped||0}</b></div>
@@ -495,6 +495,12 @@ function evalStopPoll(){if(evalState.poll){clearInterval(evalState.poll);evalSta
 async function evalRerun(id){
   const row=await api(`/api/evaluations/${id}/run`,{method:'POST'});
   toast(row.mode==='online'?'已重新跑完':'已重新入队');
+  evalState.runId=id;
+  await evalReloadThen('report', ()=>evalLoadReport(id));
+}
+async function evalResume(id){
+  const row=await api(`/api/evaluations/${id}/resume`,{method:'POST'});
+  toast(row.mode==='online'?'已续跑失败用例':'失败用例已重新入队');
   evalState.runId=id;
   await evalReloadThen('report', ()=>evalLoadReport(id));
 }
@@ -720,26 +726,31 @@ async function playground(selectedAgent=''){
   const models=allModels.filter(x=>x.enabled);
   const liveMcps=(mcps||[]).filter(x=>x.enabled!==false);
   const liveSkills=(skills||[]).filter(x=>x.enabled!==false);
-  const runningExps=(expRows||[]).filter(x=>x.status==='running');
-  pgCatalog={agents,models,mcps:liveMcps,skills:liveSkills,experiments:runningExps};
+  const experiments=expRows||[];
+  pgCatalog={agents,models,mcps:liveMcps,skills:liveSkills,experiments};
   if(selectedAgent) chatState.agentId=String(selectedAgent);
   if(!chatState.agentId && agents[0]) chatState.agentId=String(agents[0].id);
   if(!chatState.modelId && models[0]) chatState.modelId=String(models[0].id);
-  if(chatState.experimentId && !runningExps.some(x=>String(x.id)===String(chatState.experimentId))) chatState.experimentId='';
+  if(chatState.experimentId && !experiments.some(x=>String(x.id)===String(chatState.experimentId))) chatState.experimentId='';
   await restoreAgentChat(chatState.agentId);
   const agent=agents.find(x=>String(x.id)===String(chatState.agentId))||agents[0];
   const model=models.find(x=>String(x.id)===String(chatState.modelId))||models[0];
-  return `${head('playground', pageTools('<button class="btn ghost" type="button" id="clearChat">新开会话</button>'))}
+  const expOptions=experiments.map(x=>{
+    const live=x.status==='running';
+    const mark=live?'进行中':(statusText[x.status]||x.status);
+    return `<option value="${x.id}" ${String(x.id)===String(chatState.experimentId)?'selected':''}>${escapeHtml(x.name)}（${mark}）</option>`;
+  }).join('');
+  return `${head('playground', pageTools('<button class="btn ghost" type="button" id="resumeChat" hidden>从失败处继续</button><button class="btn ghost" type="button" id="clearChat">新开会话</button>'))}
+<div class="pg-controls">
+  <label class="pg-field">智能体<select id="runAgent" class="select">${agents.map(x=>`<option value="${x.id}" ${String(x.id)===String(agent&&agent.id)?'selected':''}>${x.name}</option>`).join('')||'<option value="">暂无智能体</option>'}</select></label>
+  <label class="pg-field">模型<select id="runModel" class="select">${models.map(x=>`<option value="${x.id}" ${String(x.id)===String(model&&model.id)?'selected':''}>${x.name}</option>`).join('')||'<option value="">暂无可用模型</option>'}</select></label>
+  <label class="pg-field">是否分流<select id="runExperiment" class="select"><option value="">不分流，使用所选智能体</option>${expOptions}</select></label>
+  <label class="pg-field" id="runUserWrap" hidden>用户 ID<input id="runUserKey" value="${escapeHtml(chatState.experimentUserKey||'')}" placeholder="例如 u_1001"></label>
+  <div class="pg-bind" id="pgBindHint"></div>
+  <div class="exp-hint" id="expHint"></div>
+  ${models.length?'':`<div class="inline-warning">没有已启用的模型，请先到模型配置中启用。</div>`}
+</div>
 <div class="pg-shell">
-  <div class="pg-toolbar">
-    <label>Agent<select id="runAgent" class="select">${agents.map(x=>`<option value="${x.id}" ${String(x.id)===String(agent&&agent.id)?'selected':''}>${x.name}</option>`).join('')}</select></label>
-    <label>模型<select id="runModel" class="select">${models.map(x=>`<option value="${x.id}" ${String(x.id)===String(model&&model.id)?'selected':''}>${x.name}</option>`).join('')}</select></label>
-    <label>A/B 实验<select id="runExperiment" class="select"><option value="">不分流</option>${runningExps.map(x=>`<option value="${x.id}" ${String(x.id)===String(chatState.experimentId)?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}</select></label>
-    <label id="runUserWrap" hidden>用户 ID<input id="runUserKey" value="${escapeHtml(chatState.experimentUserKey||'')}" placeholder="例如 u_1001" style="min-width:120px"></label>
-    <div class="pg-bind" id="pgBindHint"></div>
-    <div class="exp-hint" id="expHint"></div>
-    ${models.length?'':`<div class="inline-warning">没有已启用的模型，请先到模型配置中启用。</div>`}
-  </div>
   <div class="pg-split">
     <section class="wechat-stage">
       <header class="wechat-head">
@@ -1440,10 +1451,20 @@ async function testSandbox(id){
 async function toggleEnabled(page,id,enabled){try{await api(`/api/${page}/${id}/status`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});await afterChange(page, enabled?'已启用':'已停用')}catch(e){toast('状态修改失败，请稍后重试')}}
 function openPlayground(agentId){chatState.agentId=String(agentId);render('playground',agentId)}
 function escapeHtml(value){const el=document.createElement('div');el.textContent=String(value??'');return el.innerHTML}
-const chatState={sessionId:'',messages:[],agentId:'',modelId:'',spans:[],traceId:'',latencyMs:0,mode:'',workspace:'',experimentId:'',experimentUserKey:''};
+const chatState={sessionId:'',messages:[],agentId:'',modelId:'',spans:[],traceId:'',latencyMs:0,mode:'',workspace:'',experimentId:'',experimentUserKey:'',checkpoint:null};
 function chatKey(agentId){return 'pg_chat_'+(agentId||chatState.agentId||'default')}
 function persistChat(){if(!chatState.agentId)return;sessionStorage.setItem(chatKey(chatState.agentId),JSON.stringify(chatState))}
-function loadChat(agentId){try{const saved=JSON.parse(sessionStorage.getItem(chatKey(agentId||chatState.agentId))||'{}');if(saved&&typeof saved==='object')Object.assign(chatState,{sessionId:saved.sessionId||'',messages:Array.isArray(saved.messages)?saved.messages:[],agentId:String(agentId||saved.agentId||chatState.agentId||''),modelId:saved.modelId||chatState.modelId,spans:Array.isArray(saved.spans)?saved.spans:[],traceId:saved.traceId||'',latencyMs:saved.latencyMs||0,mode:saved.mode||'',workspace:saved.workspace||''})}catch(e){}}
+function loadChat(agentId){try{const saved=JSON.parse(sessionStorage.getItem(chatKey(agentId||chatState.agentId))||'{}');if(saved&&typeof saved==='object')Object.assign(chatState,{sessionId:saved.sessionId||'',messages:Array.isArray(saved.messages)?saved.messages:[],agentId:String(agentId||saved.agentId||chatState.agentId||''),modelId:saved.modelId||chatState.modelId,spans:Array.isArray(saved.spans)?saved.spans:[],traceId:saved.traceId||'',latencyMs:saved.latencyMs||0,mode:saved.mode||'',workspace:saved.workspace||'',checkpoint:saved.checkpoint||null})}catch(e){}}
+function syncResumeButton(){
+  const btn=$('#resumeChat');
+  if(!btn) return;
+  const ck=chatState.checkpoint;
+  btn.hidden=!(ck&&ck.resumable);
+}
+function applyCheckpoint(ck){
+  chatState.checkpoint=ck&&ck.resumable?ck:null;
+  syncResumeButton();
+}
 async function restoreAgentChat(agentId){
   chatState.agentId=String(agentId||'');
   loadChat(chatState.agentId);
@@ -1459,8 +1480,12 @@ async function restoreAgentChat(agentId){
       chatState.spans=last&&last.spans||[];
       chatState.traceId=last&&last.trace_id||'';
     }
+    if(latest && (!chatState.sessionId || latest.session_id===chatState.sessionId)){
+      applyCheckpoint(latest.checkpoint||null);
+    }
     persistChat();
   }catch(e){}
+  syncResumeButton();
 }
 function currentAgentName(){const el=$('#runAgent');return el&&el.selectedOptions[0]?el.selectedOptions[0].textContent:'Agent'}
 function currentAgent(){
@@ -1518,11 +1543,30 @@ function syncChatHeader(){
   if(model&&model.selectedOptions[0]&&$('#chatPeerMeta'))$('#chatPeerMeta').textContent=model.selectedOptions[0].textContent;
   syncBindHint();
 }
-function resetChat(){chatState.sessionId='';chatState.messages=[];chatState.spans=[];chatState.traceId='';chatState.latencyMs=0;chatState.mode='';persistChat();paintChat();paintTrace();paintExpHint(null);const state=$('#runState');if(state){state.className='pill draft';state.textContent='待发送'}}
+function resetChat(){chatState.sessionId='';chatState.messages=[];chatState.spans=[];chatState.traceId='';chatState.latencyMs=0;chatState.mode='';chatState.checkpoint=null;persistChat();paintChat();paintTrace();paintExpHint(null);syncResumeButton();const state=$('#runState');if(state){state.className='pill draft';state.textContent='待发送'}}
 function paintExpHint(info){
   const el=$('#expHint'); if(!el) return;
-  if(!info||info.holdout){el.textContent=info&&info.holdout?'当前会话未进组，仍走所选 Agent':'';return}
-  if(info.variant_key) el.textContent=`当前分流到变体 ${info.variant_key} · ${info.variant_name||''} · ${info.agent_name||''}`;
+  const exp=currentExperiment();
+  if(info&&info.holdout){el.textContent='当前会话未进组，仍走所选智能体';return}
+  if(info&&info.variant_key){el.textContent=`本轮已分流到 ${info.variant_key} · ${info.variant_name||''} · ${info.agent_name||''}。下拉框里的智能体仍可改，作为未进组时的默认。`;return}
+  if(exp){el.textContent=exp.status==='running'?'已开启分流：发送后由实验决定实际智能体，未进组才用上面选的。':'这个实验还没启动，请先到 A/B 实验页点启动，或改回「不分流」。';return}
+  el.textContent='';
+}
+function currentExperiment(){
+  const id=($('#runExperiment')&&$('#runExperiment').value)||chatState.experimentId;
+  return (pgCatalog.experiments||[]).find(x=>String(x.id)===String(id));
+}
+function applyExperimentChoice(){
+  const expSel=$('#runExperiment');
+  if(!expSel) return;
+  const exp=currentExperiment();
+  if(expSel.value && exp && exp.status!=='running'){
+    toast('只有进行中的实验才会分流，请先到 A/B 实验页启动');
+  }
+  chatState.experimentId=expSel.value||'';
+  resetChat();
+  syncExpUserField();
+  paintExpHint(null);
 }
 async function runPlayground(){
   const button=$('#runButton'),state=$('#runState'),input=$('#runMessage'),log=$('#chatLog');
@@ -1530,6 +1574,10 @@ async function runPlayground(){
   const message=input.value.trim();
   if(!message){toast('请输入消息');return}
   if(!$('#runModel').value){toast('请先启用一个模型');return}
+  if($('#runExperiment')&&$('#runExperiment').value){
+    const exp=currentExperiment();
+    if(exp&&exp.status!=='running'){toast('只有进行中的实验才会分流，请先启动或改回「不分流」');return}
+  }
   chatState.agentId=$('#runAgent').value;chatState.modelId=$('#runModel').value;
   chatState.messages.push({role:'user',content:message,agent:'我'});
   persistChat();input.value='';input.style.height='auto';paintChat();
@@ -1551,10 +1599,11 @@ async function runPlayground(){
     chatState.spans=Array.isArray(r.spans)?r.spans:[];
     chatState.workspace=r.workspace||chatState.workspace;
     chatState.messages.push({role:'assistant',content:reply,agent:r.agent||currentAgentName(),error:r.mode==='error'});
+    applyCheckpoint(r.checkpoint||null);
     persistChat();
     if(state){state.className=r.mode==='error'?'pill failed':r.mode==='ready'?'pill completed':'pill queued';state.textContent=r.mode==='ready'?'已回复':r.mode==='error'?'调用失败':'预览回复'}
     paintExpHint(r.experiment);
-    if(r.agent_id){chatState.agentId=String(r.agent_id);if($('#runAgent'))$('#runAgent').value=String(r.agent_id)}
+    if(r.agent && $('#chatPeerName')) $('#chatPeerName').textContent=r.agent;
     paintChat();paintTrace();syncChatHeader();
   }catch(e){
     chatState.messages.push({role:'assistant',content:e.message||'没有获得返回，请检查 Agent 与模型配置',agent:currentAgentName(),error:true});
@@ -1562,11 +1611,43 @@ async function runPlayground(){
     persistChat();if(state){state.className='pill failed';state.textContent='发送失败'}paintChat();paintTrace();
   }finally{button.disabled=false;input.focus()}
 }
+async function resumePlayground(){
+  const button=$('#resumeChat'),state=$('#runState'),log=$('#chatLog');
+  if(!button||!log)return;
+  if(!chatState.sessionId||!(chatState.checkpoint&&chatState.checkpoint.resumable)){toast('当前没有可恢复的检查点');return}
+  if(!$('#runModel').value){toast('请先启用一个模型');return}
+  chatState.agentId=$('#runAgent').value;chatState.modelId=$('#runModel').value;
+  log.insertAdjacentHTML('beforeend',`<div class="wx-row theirs" id="chatTyping"><i class="wechat-avatar agent">${escapeHtml(currentAgentName()[0])}</i><div class="wx-col"><span class="wx-name">${escapeHtml(currentAgentName())}</span><div class="wx-bubble typing"><i></i><i></i><i></i></div></div></div>`);
+  log.scrollTop=log.scrollHeight;
+  button.disabled=true;if(state){state.className='pill running';state.textContent='续跑中'}
+  chatState.spans=[{title:'恢复检查点',kind:'input',status:'ok',detail:chatState.checkpoint.next||''},{title:'继续执行',kind:'llm',status:'ok',detail:'从失败处继续…'}];
+  paintTrace();
+  try{
+    const payload={agent_id:Number($('#runAgent').value),model_config_id:Number($('#runModel').value),session_id:chatState.sessionId};
+    const r=await api('/api/playground/resume',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    const reply=r.reply||r.output||r.response||'没有返回内容';
+    chatState.sessionId=r.session_id||chatState.sessionId;
+    chatState.traceId=r.trace_id||'';
+    chatState.latencyMs=r.latency_ms||0;
+    chatState.mode=r.mode||'';
+    chatState.spans=Array.isArray(r.spans)?r.spans:[];
+    chatState.workspace=r.workspace||chatState.workspace;
+    chatState.messages.push({role:'assistant',content:reply,agent:r.agent||currentAgentName(),error:r.mode==='error'});
+    applyCheckpoint(r.checkpoint||null);
+    persistChat();
+    if(state){state.className=r.mode==='error'?'pill failed':r.mode==='ready'?'pill completed':'pill queued';state.textContent=r.mode==='ready'?'已续跑':r.mode==='error'?'续跑失败':'预览回复'}
+    paintChat();paintTrace();syncChatHeader();
+  }catch(e){
+    chatState.messages.push({role:'assistant',content:e.message||'续跑失败，请检查 Agent 与模型配置',agent:currentAgentName(),error:true});
+    chatState.spans=[{title:'续跑失败',kind:'output',status:'error',detail:e.message||'请求未成功'}];
+    persistChat();if(state){state.className='pill failed';state.textContent='续跑失败'}paintChat();paintTrace();
+  }finally{button.disabled=false;syncResumeButton()}
+}
 function bindPage(page){
   evalStopPoll();
   if(page==='evaluations') bindEvalPage();
   if(page==='experiments') bindExpPage();
-  if(page==='sessions'){const runFilter=async()=>{const p=new URLSearchParams();const q=$('#sessionQ').value.trim(),a=$('#agentFilter').value,s=$('#statusFilter').value;if(q)p.set('q',q);if(a)p.set('agent_name',a);if(s)p.set('status',s);const rows=await api('/api/sessions?'+p);$('#sessionResults').innerHTML=sessionTable(rows).replace('<section class="panel wide-panel">','<section>');closeSessionDetail()};$('#doFilter').onclick=runFilter;$('#sessionQ').onkeydown=e=>{if(e.key==='Enter')runFilter()};$('#sessionResults').onclick=e=>{const hit=e.target.closest('[data-session-id]');if(hit)openSessionDetail(hit.dataset.sessionId)}}if(page==='playground'){paintChat();paintTrace();syncChatHeader();const form=$('#chatForm'),input=$('#runMessage');if(form)form.onsubmit=e=>{e.preventDefault();runPlayground()};if(input){input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();runPlayground()}});input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(120,input.scrollHeight)+'px'})}const agentSel=$('#runAgent'),modelSel=$('#runModel');if(agentSel)agentSel.onchange=async()=>{if(String(chatState.agentId)!==agentSel.value){await restoreAgentChat(agentSel.value);paintChat();paintTrace()}syncChatHeader()};if(modelSel)modelSel.onchange=()=>{chatState.modelId=modelSel.value;persistChat();syncChatHeader()};const expSel=$('#runExperiment');if(expSel)expSel.onchange=()=>{chatState.experimentId=expSel.value;resetChat();syncExpUserField()};const userKey=$('#runUserKey');if(userKey)userKey.onchange=()=>{chatState.experimentUserKey=userKey.value.trim()};syncExpUserField();if($('#clearChat'))$('#clearChat').onclick=resetChat;input&&input.focus()}if(page==='workflows') bindWorkflowCanvas()}
+  if(page==='sessions'){const runFilter=async()=>{const p=new URLSearchParams();const q=$('#sessionQ').value.trim(),a=$('#agentFilter').value,s=$('#statusFilter').value;if(q)p.set('q',q);if(a)p.set('agent_name',a);if(s)p.set('status',s);const rows=await api('/api/sessions?'+p);$('#sessionResults').innerHTML=sessionTable(rows).replace('<section class="panel wide-panel">','<section>');closeSessionDetail()};$('#doFilter').onclick=runFilter;$('#sessionQ').onkeydown=e=>{if(e.key==='Enter')runFilter()};$('#sessionResults').onclick=e=>{const hit=e.target.closest('[data-session-id]');if(hit)openSessionDetail(hit.dataset.sessionId)}}if(page==='playground'){paintChat();paintTrace();syncChatHeader();const form=$('#chatForm'),input=$('#runMessage');if(form)form.onsubmit=e=>{e.preventDefault();runPlayground()};if(input){input.addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();runPlayground()}});input.addEventListener('input',()=>{input.style.height='auto';input.style.height=Math.min(120,input.scrollHeight)+'px'})}const agentSel=$('#runAgent'),modelSel=$('#runModel');if(agentSel)agentSel.onchange=async()=>{if(String(chatState.agentId)!==agentSel.value){await restoreAgentChat(agentSel.value);paintChat();paintTrace()}syncChatHeader()};if(modelSel)modelSel.onchange=()=>{chatState.modelId=modelSel.value;persistChat();syncChatHeader()};const expSel=$('#runExperiment');if(expSel)expSel.onchange=applyExperimentChoice;const userKey=$('#runUserKey');if(userKey)userKey.onchange=()=>{chatState.experimentUserKey=userKey.value.trim()};syncExpUserField();paintExpHint(null);if($('#resumeChat'))$('#resumeChat').onclick=resumePlayground;syncResumeButton();if($('#clearChat'))$('#clearChat').onclick=resetChat;input&&input.focus()}if(page==='workflows') bindWorkflowCanvas()}
 function syncExpUserField(){
   const wrap=$('#runUserWrap');
   if(!wrap) return;

@@ -112,6 +112,66 @@ def list_sessions(agent: Agent) -> list[dict[str, Any]]:
     return rows
 
 
+def checkpoint_public(ckpt: Optional[dict[str, Any]]) -> Optional[dict[str, Any]]:
+    if not ckpt:
+        return None
+    status = ckpt.get("status") or ""
+    return {
+        "run_id": ckpt.get("run_id") or "",
+        "status": status,
+        "next": ckpt.get("next") or "",
+        "step": ckpt.get("step") or 0,
+        "error": ckpt.get("error") or "",
+        "resumable": status in {"failed", "running"},
+    }
+
+
+def save_checkpoint(agent: Agent, session_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    ensure_workspace(agent)
+    now = _iso(datetime.now(timezone.utc))
+    data = load_session(agent, session_id) or {
+        "session_id": session_id,
+        "agent_id": agent.id,
+        "agent_name": agent.name,
+        "messages": [],
+        "traces": [],
+        "created_at": now,
+    }
+    ckpt = dict(payload or {})
+    ckpt["session_id"] = session_id
+    ckpt["agent_id"] = agent.id
+    ckpt["updated_at"] = now
+    data["checkpoint"] = ckpt
+    data["agent_id"] = agent.id
+    data["agent_name"] = agent.name
+    data["updated_at"] = now
+    if not data.get("messages") and (ckpt.get("last_user") or ""):
+        data["messages"] = [{
+            "role": "user",
+            "content": ckpt.get("last_user") or "",
+            "agent_name": "我",
+            "created_at": now,
+        }]
+        data["title"] = data.get("title") or (ckpt.get("last_user") or "")[:80]
+    _write_json(session_path(agent, session_id), data)
+    return ckpt
+
+
+def load_checkpoint(agent: Agent, session_id: str) -> Optional[dict[str, Any]]:
+    data = load_session(agent, session_id)
+    ckpt = (data or {}).get("checkpoint")
+    return ckpt if isinstance(ckpt, dict) and ckpt.get("status") else None
+
+
+def clear_checkpoint(agent: Agent, session_id: str) -> None:
+    data = load_session(agent, session_id)
+    if not data or not data.get("checkpoint"):
+        return
+    data["checkpoint"] = None
+    data["updated_at"] = _iso(datetime.now(timezone.utc))
+    _write_json(session_path(agent, session_id), data)
+
+
 def persist_run(
     *,
     agent: Agent,
@@ -125,6 +185,7 @@ def persist_run(
     spans: list[dict[str, Any]],
     usage: dict[str, Any],
     latency_ms: int,
+    include_user: bool = True,
 ) -> dict[str, Any]:
     ensure_workspace(agent)
     now = _iso(datetime.now(timezone.utc))
@@ -142,12 +203,15 @@ def persist_run(
     data["agent_name"] = agent.name
     data["title"] = data.get("title") or title[:80]
     data["updated_at"] = now
-    data.setdefault("messages", []).extend(
-        [
-            {"role": "user", "content": message, "agent_name": "我", "created_at": now},
-            {"role": "assistant", "content": reply, "agent_name": agent.name, "created_at": now, "error": mode == "error"},
-        ]
-    )
+    incoming = []
+    messages = data.setdefault("messages", [])
+    last = messages[-1] if messages else None
+    if include_user and message and not (last and last.get("role") == "user" and last.get("content") == message):
+        incoming.append({"role": "user", "content": message, "agent_name": "我", "created_at": now})
+    incoming.append({"role": "assistant", "content": reply, "agent_name": agent.name, "created_at": now, "error": mode == "error"})
+    messages.extend(incoming)
+    if mode != "error":
+        data["checkpoint"] = None
     trace = {
         "trace_id": trace_id,
         "session_id": session_id,
@@ -190,6 +254,7 @@ def _session_summary(data: dict[str, Any]) -> dict[str, Any]:
         "updated_at": data.get("updated_at") or data.get("created_at") or "",
         "messages": messages,
         "traces": traces,
+        "checkpoint": checkpoint_public(data.get("checkpoint") if isinstance(data.get("checkpoint"), dict) else None),
     }
 
 
