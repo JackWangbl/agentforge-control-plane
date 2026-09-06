@@ -1,5 +1,6 @@
 # AgentForge Control Plane
-![Uploading image.png…]()
+<img width="2988" height="1770" alt="image" src="https://github.com/user-attachments/assets/134020b7-38e8-454d-8d4f-a1943d47d4f9" />
+
 
 
 
