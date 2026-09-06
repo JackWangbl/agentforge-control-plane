@@ -19,9 +19,13 @@
 .eval-metric b{display:block;font-size:22px;letter-spacing:-.4px}
 .eval-metric span{color:#8a94a3;font-size:11px}
 .eval-actual{max-width:360px;white-space:pre-wrap;color:#3d4a5c}
+.eval-add{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
+.eval-add label{display:block;font-size:12px;color:#5b6778;margin-bottom:6px}
+.eval-add textarea{width:100%;min-height:76px;border:1px solid var(--line);border-radius:8px;padding:8px;font:inherit;resize:vertical}
+.eval-add button{height:36px}
 .muted{color:#8a94a3;font-size:12px}
 .pill.passed{background:#eaf8f1;color:#168a59}
 .pill.cancelled,.pill.skipped{background:#f1f2f5;color:#747f8f}
 @media (max-width:900px){
-  .eval-grid,.eval-form,.eval-metrics{grid-template-columns:1fr}
+  .eval-grid,.eval-form,.eval-metrics,.eval-add{grid-template-columns:1fr}
 }

@@ -25,6 +25,36 @@ def test_rule_scorers():
     assert score_case("contains", "", "任意输出")["status"] == "skipped"
 
 
+def test_add_case_persists():
+    with TestClient(app) as client:
+        created = client.post("/api/datasets", json={"name": "手工用例集"})
+        assert created.status_code == 201, created.text
+        dataset_id = created.json()["id"]
+        agents = client.get("/api/agents").json()
+        blocked = client.post(
+            "/api/evaluations",
+            json={"agent_id": agents[0]["id"], "dataset_id": dataset_id, "scorer": "contains"},
+        )
+        assert blocked.status_code == 400
+        added = client.post(
+            f"/api/datasets/{dataset_id}/cases",
+            json={"input": "退款多久到账", "expected": "三个工作日"},
+        )
+        assert added.status_code == 201, added.text
+        listed = client.get(f"/api/datasets/{dataset_id}").json()
+        assert listed["case_count"] == 1
+        assert listed["cases"][0]["input"] == "退款多久到账"
+        assert listed["cases"][0]["expected"] == "三个工作日"
+        again = client.get("/api/datasets").json()
+        assert any(row["id"] == dataset_id and row["case_count"] == 1 for row in again)
+        empty = client.post(
+            "/api/evaluations",
+            json={"agent_id": client.get("/api/agents").json()[0]["id"], "dataset_id": dataset_id + 99999, "scorer": "contains"},
+        )
+        assert empty.status_code in {400, 404}
+        client.delete(f"/api/datasets/{dataset_id}")
+
+
 def test_dataset_import_and_online_eval():
     with TestClient(app) as client:
         created = client.post("/api/datasets", json={"name": "评测集-单测"})

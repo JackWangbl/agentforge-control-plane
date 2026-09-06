@@ -116,6 +116,8 @@ def _insert_cases(db: Session, dataset: Dataset, cases: list[dict[str, Any]], on
             expected=item.get("expected") or "",
             tags=item.get("tags") or [],
             extra=item.get("extra") or {},
+            tenant_id=dataset.tenant_id,
+            owner_id=dataset.owner_id,
         )
         db.add(row)
         if key:
