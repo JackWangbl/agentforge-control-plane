@@ -129,9 +129,9 @@ async function openSessionDetail(sessionId){
   }catch(e){target.innerHTML='<div class="empty">会话详情加载失败。</div>'}
 }
 
-const resourceInfo={agents:{icon:'◇',name:'Agent',desc:x=>x.description,meta:x=>[x.model_name+' · '+(x.version||''), x.workspace?('空间 '+x.workspace):agentBindSummary(x)],action:'新建 Agent'},mcp:{icon:'⚙',name:'MCP 服务',desc:x=>x.endpoint,meta:x=>[x.transport.toUpperCase(),(x.runnable?'可调用 ':'')+(x.tools_count||0)+' 个工具'],action:'添加 MCP'},skills:{icon:'✦',name:'Skill',desc:x=>x.description,meta:x=>[x.version,x.has_instruction?'指令已就绪':'待填写指令'],action:'添加 Skill'},models:{icon:'◉',name:'模型',desc:x=>x.model_id,meta:x=>[x.provider,x.has_credential?'密钥已就绪':'待填写密钥'],action:'添加模型'},sandboxes:{icon:'▣',name:'沙箱策略',desc:x=>x.runtime,meta:x=>[x.cpu_limit+' / '+x.memory_limit,x.network_mode],action:'新建策略'},roles:{icon:'♙',name:'角色',desc:x=>x.description,meta:x=>[x.user_count+' 位用户',(x.permissions||[]).length+' 项权限'],action:'新建角色'}};
+const resourceInfo={agents:{icon:'◇',name:'Agent',desc:x=>x.description,meta:x=>[x.model_name+' · '+(x.version||''), x.workspace?('空间 '+x.workspace):agentBindSummary(x)],action:'新建 Agent'},mcp:{icon:'⚙',name:'MCP 服务',desc:x=>x.endpoint,meta:x=>[mcpTransportLabel(x.transport),(x.runnable?'可调用 ':'')+(x.tools_count||0)+' 个工具'],action:'添加 MCP'},skills:{icon:'✦',name:'Skill',desc:x=>x.description,meta:x=>[x.version,x.has_instruction?'指令已就绪':'待填写指令'],action:'添加 Skill'},models:{icon:'◉',name:'模型',desc:x=>x.model_id,meta:x=>[x.provider,x.has_credential?'密钥已就绪':'待填写密钥'],action:'添加模型'},sandboxes:{icon:'▣',name:'沙箱策略',desc:x=>x.runtime+' · '+(x.backend||'local'),meta:x=>[x.cpu_limit+' / '+x.memory_limit,(x.network_mode==='deny'?'断网隔离':x.network_mode)+' · '+(x.timeout_seconds||60)+'s'],action:'新建策略'},roles:{icon:'♙',name:'角色',desc:x=>x.description,meta:x=>[x.user_count+' 位用户',(x.permissions||[]).length+' 项权限'],action:'新建角色'}};
 const resourceStore = {};
-function resourceActions(page,x){const writable=x.editable!==false;const primary=page==='agents'?`<button type="button" class="btn primary resource-edit" onclick="openPlayground(${x.id})">调试运行</button>`:page==='models'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用模型'"} onclick="testModel(${x.id})">连通测试</button>`:page==='mcp'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 MCP'"} onclick="testMcp(${x.id})">探测工具</button>`:page==='skills'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 Skill'"} onclick="testSkill(${x.id})">预览指令</button>`:'';return `${primary}${writable?`<button type="button" class="btn ghost resource-edit" onclick="openEdit('${page}',${x.id})">编辑</button><button type="button" class="btn ghost resource-edit danger" onclick="removeResource('${page}',${x.id})">删除</button>`:'<span class="muted">只读</span>'}`}
+function resourceActions(page,x){const writable=x.editable!==false;const primary=page==='agents'?`<button type="button" class="btn primary resource-edit" onclick="openPlayground(${x.id})">调试运行</button>`:page==='models'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用模型'"} onclick="testModel(${x.id})">连通测试</button>`:page==='mcp'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 MCP'"} onclick="testMcp(${x.id})">探测工具</button>`:page==='skills'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 Skill'"} onclick="testSkill(${x.id})">预览指令</button>`:page==='sandboxes'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用沙箱'"} onclick="testSandbox(${x.id})">试跑代码</button>`:'';return `${primary}${writable?`<button type="button" class="btn ghost resource-edit" onclick="openEdit('${page}',${x.id})">编辑</button><button type="button" class="btn ghost resource-edit danger" onclick="removeResource('${page}',${x.id})">删除</button>`:'<span class="muted">只读</span>'}`}
 function statusControl(page,x){if(x.enabled===undefined)return '';return `<button type="button" class="switch ${x.enabled?'on':''}" role="switch" aria-checked="${x.enabled}" aria-label="${x.enabled?'停用':'启用'}${x.name}" title="点击${x.enabled?'停用':'启用'}" onclick="toggleEnabled('${page}',${x.id},${!x.enabled})"><i></i></button>`}
 function agentBindSummary(x){
   const skills=(x.bound_skills||[]).map(item=>item.name);
@@ -662,12 +662,79 @@ async function workflows(){
 }
 const forms={
   agents:[['name','Agent 名称','合同审核助手'],['description','功能说明','说明 Agent 的业务职责'],['model_name','使用模型','Qwen-Max'],['version','初始版本','v1.0.0'],['system_prompt','系统提示词','你是一名专业的企业助手']],
-  mcp:[['name','服务名称','本地工具'],['transport','传输协议','stdio'],['endpoint','服务地址','builtin:local-tools']],
+  mcp:[['name','服务名称','高德地图'],['transport','传输协议','streamable_http'],['endpoint','服务地址','https://mcp.amap.com/mcp']],
   skills:[['name','Skill 名称','客服回复规范'],['description','能力说明','这段指令会注入到调试台的 Agent'],['version','版本','1.0.0'],['instruction','SKILL.md 正文','# 技能名称\n\n直接在这里写 Markdown。调试台会按这份正文执行。']],
   models:[['name','配置名称','生产模型'],['provider','供应商','OpenAI / DeepSeek'],['model_id','模型 ID','deepseek-v4-flash'],['base_url','Base URL','https://api.deepseek.com'],['api_key','API 密钥','sk-...'],['temperature','Temperature','0.2']],
   sandboxes:[['name','策略名称','受限 Python 沙箱'],['runtime','运行镜像','python:3.11'],['cpu_limit','CPU 限制','1 vCPU'],['memory_limit','内存限制','1 GiB'],['timeout_seconds','超时时间（秒）','60'],['network_mode','网络模式','deny']],
   roles:[['name','角色名称','业务观察员'],['description','角色说明','只读查看业务数据'],['permissions','权限列表（逗号分隔）','session:read,trace:read']]
 };
+function mcpTransportLabel(value){
+  const kind=String(value||'').toLowerCase().replace(/-/g,'_');
+  if(kind==='streamable_http'||kind==='http'||kind==='http_stream') return 'HTTP Stream';
+  if(kind==='sse') return 'SSE';
+  if(kind==='stdio') return 'StdIO';
+  return String(value||'').toUpperCase();
+}
+function mcpTransportValue(value){
+  const kind=String(value||'').toLowerCase().replace(/-/g,'_');
+  if(kind==='streamable_http'||kind==='http'||kind==='http_stream') return 'streamable_http';
+  if(kind==='sse') return 'sse';
+  return 'stdio';
+}
+function sandboxFormHtml(row){
+  const mode=String(row&&row.network_mode||'deny');
+  return `<div class="field"><label>策略名称</label><input name="name" placeholder="受限 Python 沙箱" value="${row?escapeHtml(row.name):''}" required></div>
+    <div class="field"><label>运行时</label>
+      <select class="select" style="width:100%" name="runtime">
+        <option value="python:3.11" ${!row||row.runtime==='python:3.11'?'selected':''}>本地隔离 · python:3.11</option>
+        <option value="python:3.12" ${row&&row.runtime==='python:3.12'?'selected':''}>本地隔离 · python:3.12</option>
+        <option value="agentscope/runtime-sandbox-base" ${row&&String(row.runtime||'').includes('runtime-sandbox')?'selected':''}>AgentScope Runtime（Docker）</option>
+      </select>
+    </div>
+    <div class="field"><label>CPU 限制</label><input name="cpu_limit" placeholder="1 vCPU" value="${row?escapeHtml(row.cpu_limit||'1 vCPU'):'1 vCPU'}"></div>
+    <div class="field"><label>内存限制</label><input name="memory_limit" placeholder="1 GiB" value="${row?escapeHtml(row.memory_limit||'1 GiB'):'1 GiB'}"></div>
+    <div class="field"><label>超时（秒）</label><input name="timeout_seconds" type="number" min="1" max="3600" value="${row?escapeHtml(String(row.timeout_seconds||60)):'60'}"></div>
+    <div class="field"><label>网络</label>
+      <select class="select" style="width:100%" name="network_mode">
+        <option value="deny" ${mode==='deny'?'selected':''}>deny · 断网隔离</option>
+        <option value="allowlist" ${mode==='allowlist'?'selected':''}>allowlist · 受限联网</option>
+        <option value="allow" ${mode==='allow'?'selected':''}>allow · 允许联网</option>
+      </select>
+      <small class="bind-hint">保存后点「试跑代码」会真正执行 print(1+1)。有 AgentScope Runtime / Docker 时优先走官方沙箱，否则用本机隔离进程。</small>
+    </div>`;
+}
+function mcpFormHtml(row){
+  const transport=mcpTransportValue(row&&row.transport||'streamable_http');
+  const endpoint=row?escapeHtml(row.endpoint||''):'';
+  const hasAuth=!!(row&&row.config&&((row.config.headers&&(row.config.headers.Authorization||row.config.headers.authorization))||row.config.api_key||row.config.token));
+  return `<div class="field"><label>服务名称</label><input name="name" placeholder="高德地图" value="${row?escapeHtml(row.name):''}" required></div>
+    <div class="field"><label>传输协议</label>
+      <select class="select" style="width:100%" name="transport" id="mcpTransport" required>
+        <option value="streamable_http" ${transport==='streamable_http'?'selected':''}>HTTP Stream</option>
+        <option value="sse" ${transport==='sse'?'selected':''}>SSE</option>
+        <option value="stdio" ${transport==='stdio'?'selected':''}>StdIO</option>
+      </select>
+    </div>
+    <div class="field"><label id="mcpEndpointLabel">${transport==='stdio'?'启动命令':'服务地址'}</label>
+      <input name="endpoint" id="mcpEndpoint" placeholder="${transport==='stdio'?'builtin:local-tools':'https://mcp.example.com/mcp'}" value="${endpoint}" required>
+    </div>
+    <div class="field" id="mcpAuthField" ${transport==='stdio'?'hidden':''}><label>请求头 / Token（可选）</label>
+      <input name="auth" type="password" placeholder="${hasAuth?'已保存密钥，留空则不修改':'Bearer sk-... 或 Authorization: Bearer sk-...'}" autocomplete="off">
+      <small class="bind-hint">HTTP Stream 走 MCP Streamable HTTP。保存后点「探测工具」会握手并拉工具列表。</small>
+    </div>`;
+}
+function bindMcpForm(){
+  const sel=$('#mcpTransport'), input=$('#mcpEndpoint'), label=$('#mcpEndpointLabel'), auth=$('#mcpAuthField');
+  if(!sel||!input) return;
+  const apply=()=>{
+    const stream=sel.value!=='stdio';
+    if(label) label.textContent=stream?'服务地址':'启动命令';
+    input.placeholder=stream?'https://mcp.example.com/mcp':'builtin:local-tools';
+    if(auth) auth.hidden=!stream;
+  };
+  sel.onchange=apply;
+  apply();
+}
 function bindEmpty(page, label){
   return `<div class="bind-empty-card">还没有可关联的${label}。<button type="button" class="bind-link" data-jump="${page}">去添加</button></div>`;
 }
@@ -678,7 +745,7 @@ function bindPicker(kind, name, rows, selected, emptyPage, emptyLabel){
   const options=live.map(x=>{
     const tools=x.tools||[];
     const meta=kind==='mcp'
-      ? `${String(x.transport||'').toUpperCase()} · ${x.endpoint||'MCP'} · ${tools.length||x.tools_count||0} 个工具`
+      ? `${mcpTransportLabel(x.transport)} · ${x.endpoint||'MCP'} · ${tools.length||x.tools_count||0} 个工具`
       : `${x.description||'Skill'} · ${x.version||''}`;
     return `<label class="bind-option" data-search="${escapeHtml(`${x.name} ${meta}`.toLowerCase())}">
       <input type="checkbox" name="${name}" value="${x.id}" ${ids.includes(x.id)?'checked':''}>
@@ -697,14 +764,16 @@ function bindPicker(kind, name, rows, selected, emptyPage, emptyLabel){
     </div>
   </div>`;
 }
-function agentFormHtml(row, models, mcpRows, skillRows){
+function agentFormHtml(row, models, mcpRows, skillRows, sandboxRows){
   const modelOptions=models.map(m=>`<option value="${escapeHtml(m.name)}" ${row&&row.model_name===m.name?'selected':''}>${escapeHtml(m.name)} · ${escapeHtml(m.model_id)}</option>`).join('');
+  const sandboxOptions=`<option value="">不使用沙箱</option>`+(sandboxRows||[]).filter(x=>x.enabled!==false||Number(x.id)===Number(row&&row.sandbox_id)).map(x=>`<option value="${x.id}" ${Number(row&&row.sandbox_id)===Number(x.id)?'selected':''}>${escapeHtml(x.name)} · ${escapeHtml(x.runtime||'')} · ${x.network_mode==='deny'?'断网':'可联网'}</option>`).join('');
   return `<div class="agent-form">
     <div class="agent-form-grid">
       <div class="field"><label>Agent 名称</label><input name="name" placeholder="合同审核助手" value="${row?escapeHtml(row.name):''}" required></div>
       <div class="field"><label>使用模型</label><select class="select" style="width:100%" name="model_name" required>${modelOptions}</select></div>
       <div class="field"><label>功能说明</label><input name="description" placeholder="说明 Agent 的业务职责" value="${row?escapeHtml(row.description||''):''}"></div>
       <div class="field"><label>初始版本</label><input name="version" placeholder="v1.0.0" value="${row?escapeHtml(row.version||''):''}"></div>
+      <div class="field"><label>执行沙箱</label><select class="select" style="width:100%" name="sandbox_id">${sandboxOptions}</select></div>
       ${row&&row.workspace?`<div class="field"><label>工作空间</label><input value="${escapeHtml(row.workspace)}" readonly></div>`:''}
     </div>
     <div class="field"><label>系统提示词</label><textarea name="system_prompt" class="agent-prompt" placeholder="你是一名专业的企业助手">${row?escapeHtml(row.system_prompt||''):''}</textarea></div>
@@ -787,11 +856,16 @@ async function openForm(page,row){
   let modelOptions=[], mcpRows=[], skillRows=[];
   if(page==='roles'){
     $('#modalFields').innerHTML=roleFormHtml(row);
+  } else if(page==='mcp'){
+    $('#modalFields').innerHTML=mcpFormHtml(row);
+    bindMcpForm();
+  } else if(page==='sandboxes'){
+    $('#modalFields').innerHTML=sandboxFormHtml(row);
   } else if(page==='agents'){
-    const extras=await Promise.all([api('/api/models'), api('/api/mcp'), api('/api/skills')]);
+    const extras=await Promise.all([api('/api/models'), api('/api/mcp'), api('/api/skills'), api('/api/sandboxes')]);
     modelOptions=extras[0].filter(model=>model.enabled||model.name===row?.model_name);
     mcpRows=extras[1]; skillRows=extras[2];
-    $('#modalFields').innerHTML=agentFormHtml(row, modelOptions, mcpRows, skillRows);
+    $('#modalFields').innerHTML=agentFormHtml(row, modelOptions, mcpRows, skillRows, extras[3]);
     updateBindCounts();
   } else {
     $('#modalFields').innerHTML=forms[page].map(f=>{
@@ -830,6 +904,22 @@ $('#modalForm').addEventListener('submit',async e=>{
   if(page==='agents'){
     data.skill_ids=[...form.querySelectorAll('input[name="skill_ids"]:checked')].map(x=>Number(x.value));
     data.mcp_ids=[...form.querySelectorAll('input[name="mcp_ids"]:checked')].map(x=>Number(x.value));
+    data.sandbox_id=data.sandbox_id?Number(data.sandbox_id):null;
+  }
+  if(page==='sandboxes'&&data.timeout_seconds!==undefined)data.timeout_seconds=Number(data.timeout_seconds);
+  if(page==='mcp'){
+    const auth=String(data.auth||'').trim();
+    delete data.auth;
+    if(auth){
+      const headers={};
+      if(auth.includes(':')&&!/^bearer\s+/i.test(auth)){
+        const idx=auth.indexOf(':');
+        headers[auth.slice(0,idx).trim()]=auth.slice(idx+1).trim();
+      }else{
+        headers.Authorization=/^bearer\s+/i.test(auth)?auth:'Bearer '+auth;
+      }
+      data.config={headers};
+    }
   }
   if(page==='roles'){
     data.permissions=[...form.querySelectorAll('input[name="permissions"]:checked')].map(x=>x.value);
@@ -844,7 +934,7 @@ $('#modalForm').addEventListener('submit',async e=>{
   if(data.temperature!==undefined)data.temperature=Number(data.temperature);
   if(data.timeout_seconds!==undefined)data.timeout_seconds=Number(data.timeout_seconds);
   if(data.permissions!==undefined && !Array.isArray(data.permissions)) data.permissions=String(data.permissions).split(',').map(x=>x.trim()).filter(Boolean);
-  if(page==='mcp'&&!id)data.config={};
+  if(page==='mcp'&&!id&&data.config===undefined)data.config={};
   try{
     await api(id?`/api/${page}/${id}`:`/api/${page}`,{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
     $('#modal').close();
@@ -928,6 +1018,26 @@ async function testSkill(id){
     const r=await api(`/api/skills/${id}/test`,{method:'POST'});
     openSkillPreview(id, r);
   }catch(e){toast((e&&e.message)||'Skill 预览失败')}
+}
+function openSandboxProbe(id, data){
+  const row=resourceStore.sandboxes&&resourceStore.sandboxes[id];
+  const name=(row&&row.name)||'沙箱';
+  $('#modalEyebrow').textContent='SANDBOX RUN';
+  $('#modalTitle').textContent=name+' · 试跑结果';
+  $('#modalSubmit').hidden=true;
+  $('#modal').classList.add('modal-wide');
+  const output=data.sample||data.error||'没有输出';
+  $('#modalFields').innerHTML=`<p class="skill-preview-meta">${escapeHtml(data.message||'')}</p><pre class="skill-preview">${escapeHtml(output)}</pre>`;
+  $('#modalForm').dataset.page='preview';
+  $('#modalForm').dataset.id='';
+  $('#modal').showModal();
+}
+async function testSandbox(id){
+  try{
+    const r=await api(`/api/sandboxes/${id}/test`,{method:'POST'});
+    openSandboxProbe(id, r);
+    if(r.ready) toast(r.message);
+  }catch(e){toast((e&&e.message)||'沙箱试跑失败')}
 }
 async function toggleEnabled(page,id,enabled){try{await api(`/api/${page}/${id}/status`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled})});await afterChange(page, enabled?'已启用':'已停用')}catch(e){toast('状态修改失败，请稍后重试')}}
 function openPlayground(agentId){chatState.agentId=String(agentId);render('playground',agentId)}

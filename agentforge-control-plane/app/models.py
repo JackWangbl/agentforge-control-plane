@@ -59,6 +59,7 @@ class Agent(Base, TimestampMixin, TenantOwnedMixin):
     system_prompt: Mapped[str] = mapped_column(Text, default="")
     skill_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     mcp_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    sandbox_id: Mapped[Optional[int]] = mapped_column(Integer, index=True, default=None)
     workspace: Mapped[str] = mapped_column(String(255), default="")
     success_rate: Mapped[float] = mapped_column(Float, default=0)
 

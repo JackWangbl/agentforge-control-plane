@@ -184,7 +184,7 @@ def test_update_creatable_resources():
     created_ids = []
     cases = [
         ("agents", {"name": f"编辑Agent-{suffix}", "model_name": "Qwen-Max", "description": "初始说明"}, {"description": "已更新说明"}),
-        ("mcp", {"name": f"编辑MCP-{suffix}", "transport": "http", "endpoint": "https://example.com/mcp"}, {"endpoint": "https://example.com/mcp-v2"}),
+            ("mcp", {"name": f"编辑MCP-{suffix}", "transport": "streamable_http", "endpoint": "https://example.com/mcp"}, {"endpoint": "https://example.com/mcp-v2"}),
         ("skills", {"name": f"编辑Skill-{suffix}", "description": "初始能力", "source": "skills/demo/SKILL.md"}, {"description": "已更新能力", "version": "1.1.0"}),
         ("models", {"name": f"编辑模型-{suffix}", "provider": "OpenAI", "model_id": "gpt-4.1", "temperature": 0.2}, {"temperature": 0.5, "base_url": "https://api.openai.com/v1"}),
         ("sandboxes", {"name": f"编辑沙箱-{suffix}", "runtime": "python:3.11", "timeout_seconds": 60}, {"timeout_seconds": 90, "network_mode": "allowlist"}),

@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 
 from app.models import Agent, McpServer, Skill
 from app.services.browser_runtime import browser_tool_specs, execute_browser_tool
+from app.services.mcp_stream import call_streamable_http_tool, is_http_stream_transport
+from app.services.sandbox_runtime import run_sandbox_tool, sandbox_tool_specs, selected_sandbox
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILLS_DIR = ROOT / "skills"
@@ -232,12 +234,16 @@ def mcp_tool_hint(db: Session, agent: Optional[Agent] = None) -> str:
     for row in rows:
         for tool in list_mcp_tools(row):
             names.append(tool["name"])
+    if selected_sandbox(agent, db) if agent is not None else None:
+        names.extend(spec["name"] for spec in sandbox_tool_specs())
     if not names:
         return ""
-    return "你可以调用这些 MCP 工具：" + "、".join(names) + "。需要实时时间、计算、检索技能说明或查看 Agent 列表时必须先调用工具，不要猜测。"
+    return "你可以调用这些 MCP 工具：" + "、".join(names) + "。需要实时时间、计算、检索技能说明、查看 Agent 列表或在沙箱里跑代码时必须先调用工具，不要猜测。"
 
 
 def agent_allows_tool(agent: Agent, db: Session, tool_name: str) -> bool:
+    if tool_name.startswith("sandbox_") and selected_sandbox(agent, db):
+        return True
     for row in selected_mcps(agent, db):
         if any(tool.get("name") == tool_name for tool in list_mcp_tools(row)):
             return True
@@ -251,7 +257,7 @@ def build_system_prompt(agent: Agent, db: Session) -> str:
     return f"{base}\n\n{extra}".strip() if extra else base
 
 
-def execute_tool(name: str, arguments: dict[str, Any], db: Optional[Session] = None) -> str:
+def execute_tool(name: str, arguments: dict[str, Any], db: Optional[Session] = None, agent: Optional[Agent] = None) -> str:
     if name == "get_current_time":
         return _current_time()
     if name == "calculate":
@@ -265,7 +271,33 @@ def execute_tool(name: str, arguments: dict[str, Any], db: Optional[Session] = N
             return execute_browser_tool(name, arguments)
         except Exception as exc:
             return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    if name.startswith("sandbox_") and db is not None:
+        box = selected_sandbox(agent, db) if agent is not None else None
+        if box is None and agent is None:
+            from sqlalchemy import select as sql_select
+            from app.models import SandboxPolicy
+            box = db.scalar(sql_select(SandboxPolicy).where(SandboxPolicy.enabled.is_(True)).order_by(SandboxPolicy.id))
+        if box is None:
+            return json.dumps({"error": "当前 Agent 未绑定可用沙箱"}, ensure_ascii=False)
+        return run_sandbox_tool(box, name, arguments)
+    if db is not None:
+        remote = _remote_mcp_for_tool(db, name)
+        if remote is not None:
+            try:
+                return call_streamable_http_tool(remote, name, arguments)
+            except Exception as exc:
+                return json.dumps({"error": str(exc)}, ensure_ascii=False)
     return json.dumps({"error": f"未知工具 {name}"}, ensure_ascii=False)
+
+
+def _remote_mcp_for_tool(db: Session, name: str) -> Optional[McpServer]:
+    rows = db.scalars(select(McpServer).where(McpServer.enabled.is_(True)).order_by(McpServer.id)).all()
+    for row in rows:
+        if is_builtin_mcp(row) or not is_http_stream_transport(row.transport):
+            continue
+        if any(tool.get("name") == name for tool in tool_specs_for_mcp(row)):
+            return row
+    return None
 
 
 def parse_tool_arguments(raw: Any) -> dict[str, Any]:

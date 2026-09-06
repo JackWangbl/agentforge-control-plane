@@ -9,7 +9,7 @@ class ORMModel(BaseModel):
 
 class McpCreate(BaseModel):
     name: str = Field(min_length=2, max_length=100)
-    transport: str = Field(pattern="^(http|sse|stdio)$")
+    transport: str = Field(pattern="^(stdio|sse|http|http_stream|streamable_http)$")
     endpoint: str
     enabled: bool = True
     config: dict[str, Any] = {}
@@ -58,6 +58,7 @@ class AgentCreate(BaseModel):
     system_prompt: str = ""
     skill_ids: list[int] = []
     mcp_ids: list[int] = []
+    sandbox_id: Optional[int] = None
 
 
 class SandboxCreate(BaseModel):
@@ -78,7 +79,7 @@ class RoleCreate(BaseModel):
 
 class McpUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=2, max_length=100)
-    transport: Optional[str] = Field(default=None, pattern="^(http|sse|stdio)$")
+    transport: Optional[str] = Field(default=None, pattern="^(stdio|sse|http|http_stream|streamable_http)$")
     endpoint: Optional[str] = None
     enabled: Optional[bool] = None
     config: Optional[dict[str, Any]] = None
@@ -113,6 +114,7 @@ class AgentUpdate(BaseModel):
     system_prompt: Optional[str] = None
     skill_ids: Optional[list[int]] = None
     mcp_ids: Optional[list[int]] = None
+    sandbox_id: Optional[int] = None
 
 
 class SandboxUpdate(BaseModel):

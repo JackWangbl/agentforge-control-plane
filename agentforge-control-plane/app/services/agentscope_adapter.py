@@ -49,8 +49,15 @@ def initialize_agentscope() -> bool:
 
 async def build_mcp_client(config: dict[str, Any]) -> Any:
     from agentscope.mcp import HttpStatelessClient, StdIOStatefulClient
-    if config["transport"] in {"http", "sse"}:
-        return HttpStatelessClient(name=config["name"], transport=config["transport"], url=config["endpoint"])
+    from app.services.mcp_stream import agentscope_transport, normalize_mcp_transport
+
+    transport = normalize_mcp_transport(config.get("transport"))
+    if transport in {"streamable_http", "sse"}:
+        return HttpStatelessClient(
+            name=config["name"],
+            transport=agentscope_transport(transport),
+            url=config["endpoint"],
+        )
     return StdIOStatefulClient(name=config["name"], command=config["endpoint"])
 
 

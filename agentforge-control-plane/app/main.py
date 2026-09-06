@@ -53,6 +53,21 @@ from app.services.langfuse_tracer import observability_status, public_trace_url
 from app.services.studio_tracer import export_playground_to_studio
 from app.seed import ensure_iam, purge_demo_observability_data, seed_database
 from app.services.agentscope_adapter import complete_chat, initialize_agentscope
+from app.services.mcp_stream import (
+    apply_discovered_tools,
+    is_http_stream_transport,
+    merge_mcp_config,
+    normalize_mcp_transport,
+    probe_streamable_http,
+    transport_label,
+)
+from app.services.sandbox_runtime import (
+    detect_backends,
+    preferred_backend,
+    probe_sandbox,
+    sandbox_tool_specs,
+    selected_sandbox,
+)
 from app.services.tool_runtime import (
     agent_allows_tool,
     build_system_prompt,
@@ -136,7 +151,8 @@ def dump(row: Any) -> dict[str, Any]:
         tools = list_mcp_tools(row)
         data["tools"] = tools
         data["tools_count"] = len(tools) if tools else row.tools_count
-        data["runnable"] = is_builtin_mcp(row)
+        data["runnable"] = is_builtin_mcp(row) or (is_http_stream_transport(row.transport) and bool(tools))
+        data["transport_label"] = transport_label(row.transport)
     if isinstance(row, Skill):
         instruction = skill_instruction(row)
         data["instruction"] = instruction
@@ -157,6 +173,15 @@ def dump(row: Any) -> dict[str, Any]:
                 for item in mcps
             ]
         data["workspace"] = row.workspace or ""
+        data["sandbox_id"] = row.sandbox_id
+        data["sandbox_name"] = ""
+        if db is not None and row.sandbox_id:
+            box = db.get(SandboxPolicy, row.sandbox_id)
+            data["sandbox_name"] = box.name if box else ""
+    if isinstance(row, SandboxPolicy):
+        data["backend"] = preferred_backend(row)
+        data["available_backends"] = detect_backends()
+        data["runnable"] = True
     if isinstance(row, Trace):
         data["spans"] = row.spans or []
         data["langfuse_url"] = public_trace_url(row.langfuse_url or "", row.trace_id or "")
@@ -258,6 +283,17 @@ def generate_chat_reply(agent: Agent, model: ModelConfig, history: list[dict[str
     system_prompt = build_system_prompt(agent, db)
     bound_mcps = selected_mcps(agent, db)
     tools = openai_tools_for_mcps(bound_mcps)
+    if selected_sandbox(agent, db):
+        for spec in sandbox_tool_specs():
+            if not any((item.get("function") or {}).get("name") == spec["name"] for item in tools):
+                tools.append({
+                    "type": "function",
+                    "function": {
+                        "name": spec["name"],
+                        "description": spec["description"],
+                        "parameters": spec.get("parameters") or {"type": "object", "properties": {}},
+                    },
+                })
     if not credential:
         extra = "当前模型没有密钥，这是预览回复。已绑定的 Skill 和 MCP 工具会在配置密钥后由模型调用。"
         tool_spans: list[dict[str, Any]] = []
@@ -292,7 +328,7 @@ def generate_chat_reply(agent: Agent, model: ModelConfig, history: list[dict[str
                 name = fn.get("name") or "unknown"
                 args = parse_tool_arguments(fn.get("arguments"))
                 allowed = agent_allows_tool(agent, db, name)
-                output = execute_tool(name, args, db) if allowed else json.dumps({"error": f"Agent 未绑定工具 {name}"}, ensure_ascii=False)
+                output = execute_tool(name, args, db, agent) if allowed else json.dumps({"error": f"Agent 未绑定工具 {name}"}, ensure_ascii=False)
                 traces.append(debug_span(f"mcp.{name}", f"调用工具 {name}", "tool", status="ok" if allowed else "error", duration_ms=8, detail=output))
                 working.append({"role": "tool", "tool_call_id": call.get("id") or name, "content": output})
         return working[-1].get("content") or preview_chat_reply(agent, last_user), "ready", traces, usage
@@ -413,6 +449,8 @@ def list_resource(resource: str, user: CurrentUser = Depends(get_current_user), 
 @app.post("/api/mcp", status_code=201)
 def create_mcp(payload: McpCreate, user: CurrentUser = Depends(require_permission("mcp:write")), db: Session = Depends(get_db)) -> dict[str, Any]:
     data = payload.model_dump()
+    data["transport"] = normalize_mcp_transport(data.get("transport"))
+    data["config"] = merge_mcp_config({}, data.get("config"))
     row = stamp_owner(McpServer(**data, tools_count=len((data.get("config") or {}).get("tools") or [])), user)
     if is_builtin_mcp(row):
         row.tools_count = len(list_mcp_tools(row))
@@ -503,6 +541,11 @@ def update_resource(resource: str, item_id: int, payload: dict[str, Any] = Body(
         raise HTTPException(status_code=422, detail=exc.errors()) from exc
     if resource == "models" and data.get("api_key") == "":
         data.pop("api_key")
+    if resource == "mcp":
+        if data.get("transport"):
+            data["transport"] = normalize_mcp_transport(data["transport"])
+        if "config" in data:
+            data["config"] = merge_mcp_config(getattr(row, "config", None), data.get("config"))
     for key, value in data.items():
         setattr(row, key, value)
     if resource == "skills":
@@ -526,11 +569,42 @@ def update_resource_status(resource: str, item_id: int, payload: ResourceStatusU
     return dump(row)
 
 
+@app.post("/api/sandboxes/{item_id}/test")
+def test_sandbox_policy(item_id: int, user: CurrentUser = Depends(require_permission("sandbox:read")), db: Session = Depends(get_db)) -> dict[str, Any]:
+    row = access_service.get_row(user, ResourceKind.SANDBOX, item_id, db)
+    if not row.enabled:
+        raise HTTPException(409, "Sandbox is disabled")
+    probed = probe_sandbox(row)
+    return {"id": row.id, "name": row.name, **probed}
+
+
 @app.post("/api/mcp/{item_id}/test")
 def test_mcp_connection(item_id: int, user: CurrentUser = Depends(require_permission("mcp:read")), db: Session = Depends(get_db)) -> dict[str, Any]:
     row = access_service.get_row(user, ResourceKind.MCP, item_id, db)
     if not row.enabled:
         raise HTTPException(409, "MCP server is disabled")
+    if is_http_stream_transport(row.transport) and not is_builtin_mcp(row):
+        try:
+            probed = probe_streamable_http(row)
+        except Exception as exc:
+            return {
+                "id": row.id,
+                "ready": False,
+                "status": "unreachable",
+                "tools": list_mcp_tools(row),
+                "message": f"{row.name} HTTP Stream 探测失败：{exc}",
+            }
+        apply_discovered_tools(row, probed["tools"])
+        db.commit()
+        db.refresh(row)
+        tools = list_mcp_tools(row)
+        return {
+            "id": row.id,
+            "ready": True,
+            "status": "ready",
+            "tools": tools,
+            "message": probed["message"],
+        }
     tools = list_mcp_tools(row)
     if not is_builtin_mcp(row):
         return {
@@ -538,7 +612,7 @@ def test_mcp_connection(item_id: int, user: CurrentUser = Depends(require_permis
             "ready": False,
             "status": "not_runnable",
             "tools": tools,
-            "message": f"{row.name} 只保存了地址，当前控制面只能实际调用内置 MCP「本地工具」。",
+            "message": f"{row.name} 当前仅 StdIO 内置 MCP 可直接探测；HTTP Stream 请把传输协议改成 HTTP Stream。",
         }
     sample = execute_tool("get_current_time", {})
     row.tools_count = len(tools)

@@ -84,6 +84,8 @@ def ensure_schema() -> None:
                     conn.execute(text("ALTER TABLE agents ADD COLUMN workspace VARCHAR(255) NULL"))
                 else:
                     conn.execute(text("ALTER TABLE agents ADD COLUMN workspace TEXT DEFAULT ''"))
+            if "sandbox_id" not in agent_cols:
+                conn.execute(text("ALTER TABLE agents ADD COLUMN sandbox_id INTEGER NULL"))
     if "conversations" in inspector.get_table_names():
         conversation_cols = {col["name"] for col in inspector.get_columns("conversations")}
         if "agent_id" not in conversation_cols:
