@@ -36,7 +36,11 @@ def _engine_kwargs(url: str) -> dict:
         if ":memory:" in url:
             kwargs["poolclass"] = StaticPool
         return kwargs
-    return {"pool_pre_ping": True, "pool_recycle": 3600}
+    return {
+        "pool_pre_ping": True,
+        "pool_recycle": 3600,
+        "connect_args": {"connect_timeout": 8, "read_timeout": 8, "write_timeout": 8},
+    }
 
 
 engine = create_engine(DATABASE_URL, **_engine_kwargs(DATABASE_URL))

@@ -1,0 +1,14 @@
+.exp-compare{margin-top:16px}
+.exp-compare.empty-box{padding:14px 16px;border:1px dashed var(--line);border-radius:10px;background:#f8fafc;color:#66707d;font-size:13px}
+.exp-compare-table td{vertical-align:top}
+.exp-reply p{margin:6px 0 0;font-size:12px;line-height:1.55;white-space:pre-wrap;word-break:break-word;color:#334155}
+.exp-score{display:inline-block;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:650;background:#eef2f7;color:#5d6875}
+.exp-score.passed{background:#e8f7ee;color:#1f7a4d}
+.exp-score.failed{background:#fff1f1;color:#c0392b}
+.exp-score.error{background:#fff1f1;color:#c0392b}
+.exp-score.skipped{background:#eef4ff;color:#2367e8}
+.exp-strategy-hint{display:block;margin-top:6px;color:#66707d;font-size:12px;line-height:1.5}
+.exp-variant{display:grid;grid-template-columns:44px 1fr 1fr 88px;gap:8px;align-items:center;margin-bottom:8px}
+.exp-key{display:grid;place-items:center;height:34px;border-radius:8px;background:#eef4ff;color:#2367e8;font-weight:700}
+.exp-hint{width:100%;color:#5b6778;font-size:12px}
+@media (max-width:900px){.exp-variant{grid-template-columns:44px 1fr}}
