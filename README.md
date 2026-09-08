@@ -1,5 +1,6 @@
 # AgentForge Control Plane
-<img width="2988" height="1770" alt="image" src="https://github.com/user-attachments/assets/134020b7-38e8-454d-8d4f-a1943d47d4f9" />
+<img width="3022" height="1728" alt="image" src="https://github.com/user-attachments/assets/5490fadd-6731-4c5c-91aa-5f9f784bd003" />
+
 
 
 
