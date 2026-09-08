@@ -125,6 +125,20 @@ def ensure_schema() -> None:
                     conn.execute(text("ALTER TABLE experiments ADD COLUMN assignment_strategy TEXT DEFAULT 'session_hash'"))
                 conn.execute(text("UPDATE experiments SET assignment_strategy = 'user_hash' WHERE assignment_unit = 'user' AND (assignment_strategy IS NULL OR assignment_strategy = '')"))
                 conn.execute(text("UPDATE experiments SET assignment_strategy = 'session_hash' WHERE assignment_strategy IS NULL OR assignment_strategy = ''"))
+    if "datasets" in inspector.get_table_names():
+        dataset_cols = {col["name"] for col in inspector.get_columns("datasets")}
+        with engine.begin() as conn:
+            if "kind" not in dataset_cols:
+                if is_mysql():
+                    conn.execute(text("ALTER TABLE datasets ADD COLUMN kind VARCHAR(24) NULL"))
+                else:
+                    conn.execute(text("ALTER TABLE datasets ADD COLUMN kind VARCHAR(24) DEFAULT 'baseline'"))
+                conn.execute(text("UPDATE datasets SET kind = 'baseline' WHERE kind IS NULL OR kind = ''"))
+            if "agent_ids" not in dataset_cols:
+                if is_mysql():
+                    conn.execute(text("ALTER TABLE datasets ADD COLUMN agent_ids JSON NULL"))
+                else:
+                    conn.execute(text("ALTER TABLE datasets ADD COLUMN agent_ids TEXT DEFAULT '[]'"))
     if "evaluation_runs" in inspector.get_table_names():
         eval_cols = {col["name"] for col in inspector.get_columns("evaluation_runs")}
         additions = {

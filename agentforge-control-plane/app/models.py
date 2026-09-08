@@ -150,6 +150,8 @@ class Dataset(Base, TimestampMixin, TenantOwnedMixin):
     name: Mapped[str] = mapped_column(String(120), index=True)
     description: Mapped[str] = mapped_column(String(300), default="")
     source_name: Mapped[str] = mapped_column(String(255), default="")
+    kind: Mapped[str] = mapped_column(String(24), default="baseline", index=True)
+    agent_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     case_count: Mapped[int] = mapped_column(Integer, default=0)
 
 

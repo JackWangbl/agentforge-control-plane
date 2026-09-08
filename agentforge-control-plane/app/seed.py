@@ -26,6 +26,11 @@ from app.models import (
 )
 
 DEMO_EVAL_NAMES = ("客服回归测试 #42", "知识检索准确率")
+DATASET_CONTENT_NAMES = {
+    "redteam": "提示注入",
+    "baseline": "日常问答",
+    "golden": "黄金用例",
+}
 
 
 DEMO_SESSION_IDS = (
@@ -63,6 +68,26 @@ def seed_database(db: Session) -> None:
         Workflow(name="智能客服协作流", description="意图识别、检索和工单协作", status="published", graph={"nodes": [{"id": "start", "type": "start", "label": "用户请求"}, {"id": "router", "type": "agent", "label": "意图路由"}, {"id": "kb", "type": "agent", "label": "知识库专家"}, {"id": "reply", "type": "agent", "label": "客服助手"}], "edges": [{"source": "start", "target": "router"}, {"source": "router", "target": "kb"}, {"source": "kb", "target": "reply"}]})
     ])
     db.commit()
+
+
+def repair_dataset_agent_name_collisions(db: Session) -> None:
+    """Datasets named after an Agent look like a second Agent picker. Rename them to the test content."""
+    agent_names = {name for name in db.scalars(select(Agent.name)).all() if name}
+    if not agent_names:
+        return
+    taken = {name for name in db.scalars(select(Dataset.name)).all() if name}
+    for row in db.scalars(select(Dataset)).all():
+        if row.name not in agent_names:
+            continue
+        base = DATASET_CONTENT_NAMES.get(row.kind or "baseline", "日常问答")
+        candidate = base
+        index = 2
+        while candidate in taken and candidate != row.name:
+            candidate = f"{base} {index}"
+            index += 1
+        taken.discard(row.name)
+        taken.add(candidate)
+        row.name = candidate
 
 
 def purge_demo_observability_data(db: Session) -> None:

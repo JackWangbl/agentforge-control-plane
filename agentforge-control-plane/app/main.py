@@ -60,7 +60,7 @@ from app.services.agent_workspace import (
 )
 from app.services.langfuse_tracer import observability_status, public_trace_url
 from app.services.studio_tracer import export_playground_to_studio
-from app.seed import ensure_iam, purge_demo_observability_data, seed_database
+from app.seed import ensure_iam, purge_demo_observability_data, repair_dataset_agent_name_collisions, seed_database
 from app.services.agentscope_adapter import complete_chat, initialize_agentscope
 from app.services.mcp_stream import (
     apply_discovered_tools,
@@ -130,6 +130,7 @@ async def lifespan(_: FastAPI):
     with SessionLocal() as db:
         seed_database(db)
         ensure_iam(db)
+        repair_dataset_agent_name_collisions(db)
         purge_demo_observability_data(db)
         purge_junk_and_seed_tools(db)
         ensure_iam(db)

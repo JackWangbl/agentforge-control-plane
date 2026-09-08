@@ -204,6 +204,15 @@ class ResourceStatusUpdate(BaseModel):
 class DatasetCreate(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     description: str = ""
+    kind: str = "baseline"
+    agent_ids: list[int] = []
+
+
+class DatasetUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=1, max_length=120)
+    description: Optional[str] = None
+    kind: Optional[str] = None
+    agent_ids: Optional[list[int]] = None
 
 
 class DatasetCaseCreate(BaseModel):

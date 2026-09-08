@@ -166,11 +166,11 @@ def _run_one_case(
     session_id = f"eval_{run.id}_{case.id}"
     started = datetime.utcnow()
     history = [{"role": "user", "content": case.input}]
-    reply, mode, tool_spans, usage = generate_chat_reply(agent, model, history, db)
+    reply, mode, tool_spans, usage = generate_chat_reply(agent, model, history, db, session_id=session_id)
     latency_ms = max(1, int((datetime.utcnow() - started).total_seconds() * 1000))
     spans = build_debug_spans(agent, model, mode, tool_spans, latency_ms, db)
     trace_id = new_trace_id()
-    db.add(Trace(
+    trace = Trace(
         trace_id=trace_id,
         session_id=session_id,
         agent_id=agent.id,
@@ -183,7 +183,12 @@ def _run_one_case(
         spans=spans,
         langfuse_url="",
         started_at=started,
-    ))
+    )
+    if hasattr(agent, "tenant_id"):
+        trace.tenant_id = agent.tenant_id
+    if hasattr(agent, "owner_id"):
+        trace.owner_id = agent.owner_id
+    db.add(trace)
     try:
         export_playground_to_studio(
             agent_name=agent.name,

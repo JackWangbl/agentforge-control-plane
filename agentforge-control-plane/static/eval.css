@@ -1,16 +1,33 @@
-.eval-tabs{display:flex;gap:8px;margin:-6px 0 16px}
+.eval-tabs{display:flex;gap:8px;margin:0 0 16px}
 .eval-tab{border:1px solid var(--line);background:#fff;border-radius:8px;padding:7px 12px;font-size:12px;font-weight:600;color:#5b6778;cursor:pointer}
 .eval-tab.active{background:#eef4ff;border-color:#b7d0fb;color:#2367e8}
+.eval-agent-bar{display:flex;align-items:center;justify-content:space-between;gap:16px;background:#fff;border:1px solid var(--line);border-radius:12px;padding:12px 16px;margin:0 0 14px;box-shadow:var(--shadow)}
+.eval-agent-pick{display:flex;align-items:center;gap:10px}
+.eval-agent-pick span{font-size:12px;font-weight:700;color:#5b6778;white-space:nowrap}
+.eval-agent-pick .select{min-width:220px;font-weight:600}
+.eval-agent-meta{color:#8a94a3;font-size:12px}
+.eval-agent-bar-empty .select{opacity:.65;cursor:not-allowed}
+.eval-empty-agent{background:#fff;border:1px solid var(--line);border-radius:12px;box-shadow:var(--shadow);min-height:360px;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;padding:48px 24px;gap:8px}
+.eval-empty-agent b{font-size:16px}
+.eval-empty-agent p{max-width:440px;color:#8a94a3;line-height:1.65;margin:0 0 12px}
 .eval-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
 .eval-toolbar .grow{flex:1;min-width:180px}
-.eval-grid{display:grid;grid-template-columns:260px minmax(0,1fr);gap:14px}
+.eval-grid{display:grid;grid-template-columns:220px minmax(0,1fr);gap:14px}
 .eval-side,.eval-main{background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow)}
 .eval-side{padding:12px}
 .eval-main{padding:16px;min-height:360px}
-.eval-ds{width:100%;text-align:left;border:1px solid transparent;background:#f7f9fc;border-radius:8px;padding:10px;margin-bottom:8px;cursor:pointer}
+.eval-ds-group{margin-bottom:12px}
+.eval-ds-group>small{display:block;color:#8a94a3;font-size:11px;font-weight:700;margin:0 0 6px}
+.eval-ds{width:100%;text-align:left;border:1px solid transparent;background:#f7f9fc;border-radius:8px;padding:9px 10px;margin-bottom:6px;cursor:pointer}
 .eval-ds.active{border-color:#b7d0fb;background:#f3f7ff}
 .eval-ds b{display:block;font-size:13px}
-.eval-ds small{color:#8a94a3;font-size:11px}
+.eval-ds small{display:block;color:#8a94a3;font-size:11px;margin-top:3px}
+.eval-side .empty{font-size:12px;padding:8px 4px}
+.eval-bind-existing{width:100%;margin-top:8px;font-size:12px}
+.eval-kind{display:inline-block;font-size:10px;font-weight:700;padding:1px 7px;border-radius:999px;margin:0 0 0 6px;vertical-align:middle}
+.eval-kind.redteam{background:#fdeeee;color:#c43d3d}
+.eval-kind.baseline{background:#eef4ff;color:#2367e8}
+.eval-kind.golden{background:#fff6e5;color:#c48412}
 .eval-form{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .eval-form .wide{grid-column:1/-1}
 .eval-preview{max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:8px}
@@ -26,6 +43,18 @@
 .muted{color:#8a94a3;font-size:12px}
 .pill.passed{background:#eaf8f1;color:#168a59}
 .pill.cancelled,.pill.skipped{background:#f1f2f5;color:#747f8f}
+.eval-req{border:1px solid var(--line);border-radius:12px;padding:16px;margin:0 0 14px;background:#fafbfc}
+.eval-req-head{margin-bottom:12px}
+.eval-facts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:0 0 12px}
+.eval-fact{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.eval-fact small{display:block;color:#8a94a3;font-size:11px;margin-bottom:4px}
+.eval-fact b{display:block;font-size:13px;word-break:break-word}
+.eval-fact .muted{display:block;margin-top:4px}
+.eval-io{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.eval-io small{display:block;color:#5b6778;font-size:12px;margin-bottom:6px}
+.eval-io pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;max-height:240px;overflow:auto;font:12px/1.55 inherit}
+.eval-trace-list{margin-top:8px}
 @media (max-width:900px){
-  .eval-grid,.eval-form,.eval-metrics,.eval-add{grid-template-columns:1fr}
+  .eval-grid,.eval-form,.eval-metrics,.eval-add,.eval-agent-bar,.eval-facts,.eval-io{grid-template-columns:1fr;flex-direction:column;align-items:stretch}
+  .eval-agent-pick .select{width:100%;min-width:0}
 }

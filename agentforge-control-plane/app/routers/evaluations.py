@@ -16,26 +16,97 @@ from app.access.kinds import ResourceKind
 from app.access.scope import stamp_owner
 from app.access.service import access_service
 from app.database import ROOT, SessionLocal, get_db
-from app.models import Agent, Dataset, DatasetCase, EvaluationResult, EvaluationRun
-from app.schemas import DatasetCaseCreate, DatasetCreate, EvaluationLaunch
+from app.models import Agent, Dataset, DatasetCase, EvaluationResult, EvaluationRun, Trace
+from app.schemas import DatasetCaseCreate, DatasetCreate, DatasetUpdate, EvaluationLaunch
 from app.services.dataset_import import ImportErrorDetail, parse_dataset_bytes
 from app.services.eval_runner import ONLINE_CASE_LIMIT, dump_run, execute_run, resolve_cases
 from app.services.eval_scorer import SCORERS
 
 router = APIRouter()
 DATASET_FILES = ROOT / "workspaces" / "_datasets"
+DATASET_KINDS = ("redteam", "baseline", "golden")
+DATASET_KIND_LABELS = {
+    "redteam": "安全红队集",
+    "baseline": "能力基线",
+    "golden": "黄金集",
+}
+DATASET_KIND_ALIASES = {
+    "安全红队集": "redteam",
+    "红队": "redteam",
+    "red-team": "redteam",
+    "能力基线": "baseline",
+    "能力基线集": "baseline",
+    "基线": "baseline",
+    "黄金集": "golden",
+    "golden-set": "golden",
+}
 
 
 def _refresh_count(db: Session, dataset: Dataset) -> None:
     dataset.case_count = len(list(db.scalars(select(DatasetCase.id).where(DatasetCase.dataset_id == dataset.id)).all()))
 
 
-def _dump_dataset(row: Dataset) -> dict[str, Any]:
+def _normalize_kind(value: Optional[str]) -> str:
+    raw = (value or "").strip()
+    if not raw:
+        return "baseline"
+    kind = DATASET_KIND_ALIASES.get(raw, raw).lower().replace("-", "").replace("_", "")
+    aliases = {"redteam": "redteam", "baseline": "baseline", "golden": "golden"}
+    kind = aliases.get(kind, kind)
+    if kind not in DATASET_KINDS:
+        raise HTTPException(400, "数据集分类必须是安全红队集、能力基线或黄金集")
+    return kind
+
+
+def _clean_dataset_name(user: CurrentUser, db: Session, name: Optional[str]) -> str:
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise HTTPException(400, "请填写数据集名称")
+    if any(item.name == cleaned for item in _agent_index(user, db).values()):
+        raise HTTPException(400, "数据集不能和 Agent 同名。请用测试内容命名，例如「日常问答」。")
+    return cleaned
+
+
+def _agent_ids_of(row: Dataset) -> list[int]:
+    return [int(item) for item in (row.agent_ids or []) if str(item).strip()]
+
+
+def _dataset_visible_to_agent(row: Dataset, agent_id: int) -> bool:
+    bound = _agent_ids_of(row)
+    return not bound or int(agent_id) in bound
+
+
+def _resolve_agent_ids(user: CurrentUser, db: Session, agent_ids: Optional[list[int]]) -> list[int]:
+    cleaned: list[int] = []
+    seen: set[int] = set()
+    for raw in agent_ids or []:
+        agent_id = int(raw)
+        if agent_id in seen:
+            continue
+        access_service.get_row(user, ResourceKind.AGENT, agent_id, db)
+        seen.add(agent_id)
+        cleaned.append(agent_id)
+    return cleaned
+
+
+def _agent_index(user: CurrentUser, db: Session) -> dict[int, Agent]:
+    return {row.id: row for row in access_service.list_rows(user, ResourceKind.AGENT, db)}
+
+
+def _dump_dataset(row: Dataset, agents: Optional[dict[int, Agent]] = None) -> dict[str, Any]:
+    kind = row.kind if (row.kind or "") in DATASET_KINDS else "baseline"
+    agent_ids = _agent_ids_of(row)
+    names = [agents[item].name for item in agent_ids if agents and item in agents]
     return {
         "id": row.id,
         "name": row.name,
         "description": row.description or "",
         "source_name": row.source_name or "",
+        "kind": kind,
+        "kind_label": DATASET_KIND_LABELS[kind],
+        "agent_ids": agent_ids,
+        "agent_names": names,
+        "bound": bool(agent_ids),
         "case_count": row.case_count,
         "created_at": row.created_at,
         "updated_at": row.updated_at,
@@ -60,14 +131,27 @@ def _load_run(run_id: int) -> dict[str, Any]:
     with SessionLocal() as db:
         run = db.get(EvaluationRun, run_id)
         data = dump_run(run)
-        data["results"] = [
-            _dump_result(item)
-            for item in db.scalars(select(EvaluationResult).where(EvaluationResult.run_id == run_id).order_by(EvaluationResult.id.asc())).all()
-        ]
+        results = list(
+            db.scalars(select(EvaluationResult).where(EvaluationResult.run_id == run_id).order_by(EvaluationResult.id.asc())).all()
+        )
+        traces = _traces_for_results(db, results)
+        data["results"] = [_dump_result(item, traces.get(item.trace_id)) for item in results]
         return data
 
 
-def _dump_result(row: EvaluationResult) -> dict[str, Any]:
+def _traces_for_results(db: Session, results: list[EvaluationResult]) -> dict[str, Trace]:
+    ids = [item.trace_id for item in results if item.trace_id]
+    if not ids:
+        return {}
+    return {row.trace_id: row for row in db.scalars(select(Trace).where(Trace.trace_id.in_(ids))).all()}
+
+
+def _dump_result(row: EvaluationResult, trace: Trace | None = None) -> dict[str, Any]:
+    spans = list((trace.spans if trace else None) or [])
+    tools = [item for item in spans if item.get("kind") == "tool"]
+    bound = next((item for item in spans if item.get("name") == "mcp.bind"), None)
+    model = next((item for item in spans if item.get("kind") == "llm"), None)
+    model_title = str((model or {}).get("title") or "")
     return {
         "id": row.id,
         "run_id": row.run_id,
@@ -79,8 +163,15 @@ def _dump_result(row: EvaluationResult) -> dict[str, Any]:
         "expected": row.expected,
         "actual": row.actual,
         "reason": row.reason,
-        "latency_ms": row.latency_ms,
+        "latency_ms": row.latency_ms or int(getattr(trace, "duration_ms", 0) or 0),
         "tokens": row.tokens,
+        "input_tokens": int(getattr(trace, "input_tokens", 0) or 0),
+        "output_tokens": int(getattr(trace, "output_tokens", 0) or 0),
+        "model_name": model_title.replace("调用模型 · ", "").strip(),
+        "model_id": str((model or {}).get("detail") or ""),
+        "bound_tools": str((bound or {}).get("detail") or ""),
+        "tools": tools,
+        "spans": spans,
         "trace_id": row.trace_id,
         "session_id": row.session_id,
         "error": row.error,
@@ -129,8 +220,20 @@ def _insert_cases(db: Session, dataset: Dataset, cases: list[dict[str, Any]], on
 
 
 @router.get("/api/datasets")
-def list_datasets(user: CurrentUser = Depends(require_permission("eval:read")), db: Session = Depends(get_db)) -> list[dict[str, Any]]:
-    return [_dump_dataset(row) for row in access_service.list_rows(user, ResourceKind.DATASET, db)]
+def list_datasets(
+    kind: str = "",
+    agent_id: Optional[int] = None,
+    user: CurrentUser = Depends(require_permission("eval:read")),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    rows = list(access_service.list_rows(user, ResourceKind.DATASET, db))
+    if kind.strip():
+        wanted = _normalize_kind(kind)
+        rows = [row for row in rows if (row.kind or "baseline") == wanted]
+    if agent_id:
+        rows = [row for row in rows if _dataset_visible_to_agent(row, agent_id)]
+    agents = _agent_index(user, db)
+    return [_dump_dataset(row, agents) for row in rows]
 
 
 @router.get("/api/datasets/template.csv")
@@ -145,11 +248,40 @@ def dataset_template() -> StreamingResponse:
 
 @router.post("/api/datasets", status_code=201)
 def create_dataset(payload: DatasetCreate, user: CurrentUser = Depends(require_permission("eval:run")), db: Session = Depends(get_db)) -> dict[str, Any]:
-    row = stamp_owner(Dataset(name=payload.name.strip(), description=payload.description or ""), user)
+    row = stamp_owner(
+        Dataset(
+            name=_clean_dataset_name(user, db, payload.name),
+            description=payload.description or "",
+            kind=_normalize_kind(payload.kind),
+            agent_ids=_resolve_agent_ids(user, db, payload.agent_ids),
+        ),
+        user,
+    )
     db.add(row)
     db.commit()
     db.refresh(row)
-    return _dump_dataset(row)
+    return _dump_dataset(row, _agent_index(user, db))
+
+
+@router.put("/api/datasets/{dataset_id}")
+def update_dataset(
+    dataset_id: int,
+    payload: DatasetUpdate,
+    user: CurrentUser = Depends(require_permission("eval:run")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    row = access_service.resolve_for_edit(user, ResourceKind.DATASET, dataset_id, db)
+    if payload.name is not None:
+        row.name = _clean_dataset_name(user, db, payload.name)
+    if payload.description is not None:
+        row.description = payload.description
+    if payload.kind is not None:
+        row.kind = _normalize_kind(payload.kind)
+    if payload.agent_ids is not None:
+        row.agent_ids = _resolve_agent_ids(user, db, payload.agent_ids)
+    db.commit()
+    db.refresh(row)
+    return _dump_dataset(row, _agent_index(user, db))
 
 
 @router.post("/api/datasets/import")
@@ -168,7 +300,14 @@ async def import_dataset(
         raise HTTPException(400, {"message": str(exc), "errors": exc.errors}) from exc
     dataset = access_service.get_row(user, ResourceKind.DATASET, dataset_id, db) if dataset_id else None
     if not dataset:
-        dataset = stamp_owner(Dataset(name=(name or Path(file.filename or "数据集").stem).strip() or "未命名数据集"), user)
+        dataset = stamp_owner(
+            Dataset(
+                name=(name or Path(file.filename or "数据集").stem).strip() or "未命名数据集",
+                kind="baseline",
+                agent_ids=[],
+            ),
+            user,
+        )
         db.add(dataset)
         db.flush()
     dataset.source_name = file.filename or dataset.source_name
@@ -178,13 +317,13 @@ async def import_dataset(
     (folder / (file.filename or "upload.csv")).write_bytes(raw)
     db.commit()
     db.refresh(dataset)
-    return {**_dump_dataset(dataset), **stats, "errors": parsed["errors"], "imported": parsed["count"]}
+    return {**_dump_dataset(dataset, _agent_index(user, db)), **stats, "errors": parsed["errors"], "imported": parsed["count"]}
 
 
 @router.get("/api/datasets/{dataset_id}")
 def get_dataset(dataset_id: int, user: CurrentUser = Depends(require_permission("eval:read")), db: Session = Depends(get_db)) -> dict[str, Any]:
     row = access_service.get_row(user, ResourceKind.DATASET, dataset_id, db)
-    data = _dump_dataset(row)
+    data = _dump_dataset(row, _agent_index(user, db))
     data["cases"] = [_dump_case(item) for item in db.scalars(select(DatasetCase).where(DatasetCase.dataset_id == dataset_id).order_by(DatasetCase.id.asc())).all()]
     return data
 
@@ -248,6 +387,9 @@ def delete_dataset(dataset_id: int, user: CurrentUser = Depends(require_permissi
 def _prepare_run(payload: EvaluationLaunch, mode: str, db: Session, user: CurrentUser) -> EvaluationRun:
     agent = access_service.get_row(user, ResourceKind.AGENT, payload.agent_id, db)
     dataset = access_service.get_row(user, ResourceKind.DATASET, payload.dataset_id, db)
+    if not _dataset_visible_to_agent(dataset, agent.id):
+        names = [item.name for item in _agent_index(user, db).values() if item.id in _agent_ids_of(dataset)]
+        raise HTTPException(400, f"该数据集已绑定到 {('、'.join(names) or '指定 Agent')}，不能用「{agent.name}」开测")
     scorer = (payload.scorer or "contains").lower()
     if scorer not in SCORERS:
         raise HTTPException(400, "不支持的打分方式")
@@ -299,10 +441,8 @@ def run_online(payload: EvaluationLaunch, user: CurrentUser = Depends(require_pe
 
 @router.get("/api/evaluations/{run_id}")
 def get_evaluation(run_id: int, user: CurrentUser = Depends(require_permission("eval:read")), db: Session = Depends(get_db)) -> dict[str, Any]:
-    run = access_service.get_row(user, ResourceKind.EVALUATION, run_id, db)
-    data = dump_run(run)
-    data["results"] = [_dump_result(item) for item in db.scalars(select(EvaluationResult).where(EvaluationResult.run_id == run_id).order_by(EvaluationResult.id.asc())).all()]
-    return data
+    access_service.get_row(user, ResourceKind.EVALUATION, run_id, db)
+    return _load_run(run_id)
 
 
 @router.get("/api/evaluations/{run_id}/results")
@@ -311,7 +451,9 @@ def list_results(run_id: int, status: str = "", user: CurrentUser = Depends(requ
     stmt = select(EvaluationResult).where(EvaluationResult.run_id == run_id).order_by(EvaluationResult.id.asc())
     if status:
         stmt = stmt.where(EvaluationResult.status == status)
-    return [_dump_result(row) for row in db.scalars(stmt).all()]
+    rows = list(db.scalars(stmt).all())
+    traces = _traces_for_results(db, rows)
+    return [_dump_result(row, traces.get(row.trace_id)) for row in rows]
 
 
 @router.post("/api/evaluations/{run_id}/resume")

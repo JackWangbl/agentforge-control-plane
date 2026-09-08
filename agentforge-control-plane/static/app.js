@@ -95,7 +95,7 @@ const dt = value => new Date(value+'Z').toLocaleString('zh-CN',{month:'2-digit',
 const statusText = {completed:'已完成',running:'运行中',failed:'失败',ok:'正常',error:'异常',published:'已发布',draft:'草稿',queued:'排队中',passed:'通过',skipped:'跳过',cancelled:'已取消',paused:'已暂停'};
 const titles = {dashboard:'运行概览',sessions:'会话查询',studio:'AgentScope Studio',traces:'AgentScope Studio',evaluations:'数据测试',experiments:'A/B 实验',playground:'Agent 调试台',agents:'Agent 管理',workflows:'Agent 编排',mcp:'MCP 工具',skills:'Skill 管理',models:'模型配置',sandboxes:'沙箱管理',roles:'权限管理'};
 const pageMeta = {
-  sessions:['SESSION EXPLORER','会话查询','检索和审计所有 Agent 会话记录'], studio:['AGENTSCOPE STUDIO','AgentScope Studio','查看 Agent 运行轨迹、Token 消耗与调试视图'], traces:['AGENTSCOPE STUDIO','AgentScope Studio','查看 Agent 运行轨迹、Token 消耗与调试视图'], evaluations:['EVALUATION','数据测试','用标准数据集持续验证 Agent 质量'], experiments:['A/B EXPERIMENT','A/B 分流实验','把流量按权重分到不同 Agent，对比延迟、失败率和回复质量'], playground:['AGENT PLAYGROUND','Agent 调试台','每个 Agent 使用独立工作空间保存会话、链路和配置'], agents:['AGENT REGISTRY','Agent 管理','管理 Agent 配置、版本与发布状态'], workflows:['ORCHESTRATION','Agent 编排','通过拖拽组合多 Agent 协作流程'], mcp:['TOOL REGISTRY','MCP 工具','集中配置和管控 MCP 服务与工具'], skills:['CAPABILITY HUB','Skill 管理','人工添加可复用的 Agent 专业能力'], models:['MODEL GATEWAY','模型配置','填写模型供应商、API 密钥与推理参数'], sandboxes:['SECURE RUNTIME','沙箱管理','隔离 Agent 的代码和工具执行环境'], roles:['ACCESS CONTROL','权限管理','基于角色控制平台资源访问权限']
+  sessions:['SESSION EXPLORER','会话查询','检索和审计所有 Agent 会话记录'], studio:['AGENTSCOPE STUDIO','AgentScope Studio','查看 Agent 运行轨迹、Token 消耗与调试视图'], traces:['AGENTSCOPE STUDIO','AgentScope Studio','查看 Agent 运行轨迹、Token 消耗与调试视图'], evaluations:['EVALUATION','数据测试','先选 Agent，再管理它的数据集和回归测试'], experiments:['A/B EXPERIMENT','A/B 分流实验','把流量按权重分到不同 Agent，对比延迟、失败率和回复质量'], playground:['AGENT PLAYGROUND','Agent 调试台','每个 Agent 使用独立工作空间保存会话、链路和配置'], agents:['AGENT REGISTRY','Agent 管理','管理 Agent 配置、版本与发布状态'], workflows:['ORCHESTRATION','Agent 编排','通过拖拽组合多 Agent 协作流程'], mcp:['TOOL REGISTRY','MCP 工具','集中配置和管控 MCP 服务与工具'], skills:['CAPABILITY HUB','Skill 管理','人工添加可复用的 Agent 专业能力'], models:['MODEL GATEWAY','模型配置','填写模型供应商、API 密钥与推理参数'], sandboxes:['SECURE RUNTIME','沙箱管理','隔离 Agent 的代码和工具执行环境'], roles:['ACCESS CONTROL','权限管理','基于角色控制平台资源访问权限']
 };
 let currentPage='dashboard', currentParam='';
 function pageTools(extra=''){
@@ -223,44 +223,140 @@ async function resources(page){
   }
   return `${head(page, pageTools(`<button class="btn primary" onclick="openCreate('${page}')">＋ ${info.action}</button>`))}<div class="resource-grid">${rows.map(x=>`<article class="resource-card ${x.enabled===false?'resource-disabled':''}"><div class="resource-head"><div class="resource-logo">${info.icon}</div><div style="min-width:0"><h3>${x.name}</h3><p>${info.desc(x)||'暂无说明'}</p></div>${statusControl(page,x)}</div>${page==='agents'?agentTags(x):''}<div class="resource-meta"><span>${info.meta(x)[0]}</span><span>${info.meta(x)[1]}</span><span class="resource-ops">${resourceActions(page,x)}</span></div></article>`).join('')}</div>`;
 }
-const evalState={tab:'datasets',datasetId:'',runId:'',poll:null};
+const EVAL_AGENT_KEY='af_eval_agent';
+const evalState={tab:'datasets',datasetId:'',runId:'',poll:null,kindFilter:'',agentFilter:''};
 const scorerLabel={contains:'包含匹配',exact:'完全匹配',regex:'正则',llm:'LLM 判分'};
+const datasetKindLabel={redteam:'安全红队集',baseline:'能力基线',golden:'黄金集'};
+const datasetKindOrder=['redteam','baseline','golden'];
+const datasetContentNames={redteam:'提示注入',baseline:'日常问答',golden:'黄金用例'};
+function datasetKindOf(row){return datasetKindLabel[row&&row.kind]?row.kind:'baseline'}
+function datasetKindBadge(row){const kind=datasetKindOf(row);return `<span class="eval-kind ${kind}">${datasetKindLabel[kind]}</span>`}
+function datasetDisplayName(row){
+  const raw=String(row&&row.name||'').trim()||'未命名数据集';
+  if(evalAgents().some(agent=>agent.name===raw)) return datasetContentNames[datasetKindOf(row)]||'日常问答';
+  return raw;
+}
+function evalSuggestedDatasetName(kind){
+  const base=datasetContentNames[kind]||'日常问答';
+  const used=new Set((evalState.catalog.datasets||[]).map(x=>x.name));
+  if(!used.has(base)) return base;
+  let index=2;
+  while(used.has(base+' '+index)) index+=1;
+  return base+' '+index;
+}
+function datasetUsableByAgent(row,agentId){return (row.agent_ids||[]).map(Number).includes(Number(agentId))}
+function evalUnboundDatasets(){return (evalState.catalog.datasets||[]).filter(row=>!(row.agent_ids||[]).length)}
+function evalAgents(){return evalState.catalog&&evalState.catalog.agents||[]}
+function evalReadStoredAgent(){try{return sessionStorage.getItem(EVAL_AGENT_KEY)||''}catch(e){return ''}}
+function evalWriteStoredAgent(id){try{id?sessionStorage.setItem(EVAL_AGENT_KEY,String(id)):sessionStorage.removeItem(EVAL_AGENT_KEY)}catch(e){}}
+function evalCurrentAgent(){
+  const agents=evalAgents();
+  if(!agents.length||!evalState.agentFilter) return null;
+  return agents.find(x=>String(x.id)===String(evalState.agentFilter))||null;
+}
+function evalEnsureAgent(){
+  const agents=evalAgents();
+  if(!evalState.agentFilter) evalState.agentFilter=evalReadStoredAgent();
+  const agent=agents.find(x=>String(x.id)===String(evalState.agentFilter));
+  evalState.agentFilter=agent?String(agent.id):'';
+  if(agent) evalWriteStoredAgent(agent.id); else evalWriteStoredAgent('');
+  return agent||null;
+}
+function evalRequireAgent(){
+  const agent=evalCurrentAgent();
+  if(agent) return agent;
+  toast(evalAgents().length?'请先选择评测对象':'请先创建一个 Agent');
+  return null;
+}
+async function evalGoCreateAgent(){
+  await render('agents');
+  if(can('agent:write')) openCreate('agents');
+}
+function evalAgentDatasets(){
+  const agent=evalEnsureAgent();
+  const rows=evalState.catalog.datasets||[];
+  if(!agent) return [];
+  return rows.filter(row=>datasetUsableByAgent(row, agent.id));
+}
+function evalAgentRuns(){
+  const agent=evalEnsureAgent();
+  const rows=evalState.catalog.runs||[];
+  if(!agent) return [];
+  return rows.filter(row=>String(row.agent_id)===String(agent.id) || (!row.agent_id && row.agent_name===agent.name));
+}
 async function evaluations(){
   const [datasets,runs,agents,models]=await Promise.all([
     api('/api/datasets'),api('/api/evaluations'),api('/api/agents'),api('/api/models')
   ]);
   evalState.catalog={datasets,runs,agents,models};
-  const tabs=[['datasets','数据集'],['runs','测试任务'],['report','报告']].map(([id,label])=>`<button type="button" class="eval-tab ${evalState.tab===id?'active':''}" data-eval-tab="${id}">${label}</button>`).join('');
-  return `${head('evaluations', pageTools(`<a class="btn ghost" href="/api/datasets/template.csv">下载模板</a><button class="btn primary" onclick="evalOpenLaunch()">＋ 创建测试</button>`))}<div class="eval-tabs">${tabs}</div><div id="evalBody">${evalBodyHtml()}</div>`;
+  evalEnsureAgent();
+  return `${head('evaluations', `<div class="page-actions" id="evalPageActions">${evalActionButtons()}</div>`)}<div id="evalChrome">${evalChromeHtml()}</div>`;
+}
+function evalActionButtons(){
+  const extra=evalCurrentAgent()?`<button class="btn ghost" onclick="evalCreateDataset()">＋ 数据集</button><button class="btn primary" onclick="evalOpenLaunch()">＋ 创建测试</button>`:'';
+  return `${extra}<button type="button" class="btn ghost" onclick="refreshPage()">刷新</button>`;
+}
+function evalEmptyAgentHtml(){
+  const none=!evalAgents().length;
+  return `<section class="eval-empty-agent"><b>${none?'还没有 Agent':'请先选择评测对象'}</b><p>${none?'数据集、测试任务和报告都挂在具体 Agent 上。先去创建一个，再回来评测。':'上面选定 Agent 后，才能管理它的数据集、测试任务和报告。'}</p>${none?`<button type="button" class="btn primary" onclick="evalGoCreateAgent()">去创建 Agent</button>`:''}</section>`;
+}
+function evalChromeHtml(){
+  const agents=evalAgents();
+  const agent=evalCurrentAgent();
+  const agentBar=`<div class="eval-agent-bar${agents.length?'':' eval-agent-bar-empty'}"><div class="eval-agent-pick"><span>评测对象</span><select class="select" id="evalAgentFilter" ${agents.length?'':'disabled'}><option value="">${agents.length?'请选择 Agent':'暂无 Agent'}</option>${agents.map(x=>`<option value="${x.id}" ${agent&&Number(x.id)===Number(agent.id)?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}</select></div><div class="eval-agent-meta">${agent?escapeHtml(agent.model_name||'')+' · '+(agent.version||''):(agents.length?'选定后显示模型与版本':'')}</div></div>`;
+  if(!agent) return `${agentBar}<div id="evalBody">${evalEmptyAgentHtml()}</div>`;
+  const tabs=[['datasets','数据集'],['runs','测试任务'],['report','报告'],['trace','追踪']].map(([id,label])=>`<button type="button" class="eval-tab ${evalState.tab===id?'active':''}" data-eval-tab="${id}">${label}</button>`).join('');
+  return `${agentBar}<div class="eval-tabs">${tabs}</div><div id="evalBody">${evalBodyHtml()}</div>`;
 }
 function evalBodyHtml(){
+  if(!evalCurrentAgent()) return evalEmptyAgentHtml();
   if(evalState.tab==='datasets') return evalDatasetsHtml();
   if(evalState.tab==='report') return evalReportHtml();
+  if(evalState.tab==='trace') return evalTraceHtml();
   return evalRunsHtml();
 }
 function evalDatasetsHtml(){
-  const rows=evalState.catalog.datasets||[];
-  const current=rows.find(x=>String(x.id)===String(evalState.datasetId))||rows[0];
-  if(current) evalState.datasetId=String(current.id);
-  const side=rows.length?rows.map(x=>`<button type="button" class="eval-ds ${String(x.id)===String(evalState.datasetId)?'active':''}" data-ds="${x.id}"><b>${escapeHtml(x.name)}</b><small>${x.case_count||0} 条用例</small></button>`).join(''):'<div class="empty">还没有数据集</div>';
-  return `<div class="eval-grid"><aside class="eval-side">${side}<button type="button" class="btn ghost" style="width:100%;margin-top:8px" onclick="evalCreateDataset()">＋ 新建数据集</button></aside><section class="eval-main" id="evalDatasetMain">${current?`<div class="loading">正在读取用例…</div>`:'<div class="empty">先新建或导入一个数据集。</div>'}</section></div>`;
+  const agent=evalCurrentAgent();
+  if(!agent) return evalEmptyAgentHtml();
+  const filtered=evalAgentDatasets().slice().sort((a,b)=>{
+    const ka=datasetKindOrder.indexOf(datasetKindOf(a));
+    const kb=datasetKindOrder.indexOf(datasetKindOf(b));
+    return ka-kb || datasetDisplayName(a).localeCompare(datasetDisplayName(b),'zh');
+  });
+  const current=filtered.find(x=>String(x.id)===String(evalState.datasetId))||filtered[0];
+  evalState.datasetId=current?String(current.id):'';
+  let side='<div class="empty">还没有绑定到这个 Agent 的数据集</div>';
+  if(filtered.length){
+    side=filtered.map(x=>`<button type="button" class="eval-ds ${String(x.id)===String(evalState.datasetId)?'active':''}" data-ds="${x.id}"><b>${escapeHtml(datasetDisplayName(x))}</b><small>${datasetKindLabel[datasetKindOf(x)]} · ${x.case_count||0} 条用例</small></button>`).join('');
+  }
+  const unbound=evalUnboundDatasets();
+  const extra=unbound.length?`<button type="button" class="btn ghost eval-bind-existing" onclick="evalOpenBindExisting()">关联未绑定集 · ${unbound.length}</button>`:'';
+  return `<div class="eval-grid"><aside class="eval-side">${side}${extra}</aside><section class="eval-main" id="evalDatasetMain">${current?`<div class="loading">正在读取用例…</div>`:`<div class="empty">「${escapeHtml(agent.name)}」还没有绑定数据集。<div style="margin-top:12px;display:flex;gap:8px;justify-content:center;flex-wrap:wrap"><button type="button" class="btn primary" onclick="evalCreateDataset()">＋ 新建数据集</button>${unbound.length?`<button type="button" class="btn ghost" onclick="evalOpenBindExisting()">关联已有</button>`:''}</div></div>`}</section></div>`;
 }
 function evalRunsHtml(){
-  const rows=evalState.catalog.runs||[];
-    const body=rows.length?rows.map(x=>`<tr><td><b>${escapeHtml(x.name)}</b><br><small>${x.mode==='online'?'在线抽检':'离线回归'} · ${scorerLabel[x.scorer]||x.scorer}</small></td><td>${escapeHtml(x.dataset||'')}</td><td>${escapeHtml(x.agent_name||'')}</td><td>${pill(x.status)}</td><td>${x.passed||0}/${x.total||x.cases||0}</td><td><b style="color:${x.score>=80?'#16a56a':'#e49b18'}">${x.status==='completed'?(x.score+'%'):'—'}</b></td><td><button class="btn ghost" onclick="evalOpenReport(${x.id})">报告</button> <button class="btn ghost" onclick="evalRerun(${x.id})">重跑</button>${(x.failed||0)>0&&x.status!=='running'&&x.status!=='queued'?` <button class="btn ghost" onclick="evalResume(${x.id})">续跑失败</button>`:''}${x.status==='running'||x.status==='queued'?` <button class="btn ghost" onclick="evalCancel(${x.id})">取消</button>`:''}</td></tr>`).join(''):`<tr><td class="session-empty" colspan="7">还没有测试任务。导入数据集后点右上角创建测试。</td></tr>`;
-  return `<section class="panel"><table class="data-table"><thead><tr><th>测试任务</th><th>数据集</th><th>Agent</th><th>状态</th><th>进度</th><th>通过率</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></section>`;
+  const agent=evalCurrentAgent();
+  if(!agent) return evalEmptyAgentHtml();
+  const rows=evalAgentRuns();
+  const body=rows.length?rows.map(x=>`<tr><td><b>${escapeHtml(x.name)}</b><br><small>${x.mode==='online'?'在线抽检':'离线回归'} · ${scorerLabel[x.scorer]||x.scorer}</small></td><td>${escapeHtml(x.dataset||'')}</td><td>${pill(x.status)}</td><td>${x.passed||0}/${x.total||x.cases||0}</td><td><b style="color:${x.score>=80?'#16a56a':'#e49b18'}">${x.status==='completed'?(x.score+'%'):'—'}</b></td><td><button class="btn ghost" onclick="evalOpenReport(${x.id})">报告</button> <button class="btn ghost" onclick="evalOpenTrace(${x.id})">追踪</button> <button class="btn ghost" onclick="evalRerun(${x.id})">重跑</button>${(x.failed||0)>0&&x.status!=='running'&&x.status!=='queued'?` <button class="btn ghost" onclick="evalResume(${x.id})">续跑失败</button>`:''}${x.status==='running'||x.status==='queued'?` <button class="btn ghost" onclick="evalCancel(${x.id})">取消</button>`:''}</td></tr>`).join(''):`<tr><td class="session-empty" colspan="6">「${escapeHtml(agent.name)}」还没有测试任务。选一份数据集后点右上角创建测试。</td></tr>`;
+  return `<section class="panel"><table class="data-table"><thead><tr><th>测试任务</th><th>数据集</th><th>状态</th><th>进度</th><th>通过率</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></section>`;
 }
 function evalReportHtml(){
-  return `<section class="panel" id="evalReportMain"><div class="empty">${evalState.runId?'正在载入报告…':'从测试任务里点「报告」查看结果。'}</div></section>`;
+  return `<section class="panel" id="evalReportMain"><div class="empty">${evalState.runId?'正在载入报告…':'从当前 Agent 的测试任务里点「报告」。'}</div></section>`;
+}
+function evalTraceHtml(){
+  return `<section class="panel" id="evalTraceMain"><div class="empty">${evalState.runId?'正在载入请求追踪…':'从测试任务里点「追踪」，查看每次请求的输入输出、工具、模型和消耗。'}</div></section>`;
 }
 function evalPaint(){
-  const body=$('#evalBody');
-  if(body) body.innerHTML=evalBodyHtml();
+  const actions=$('#evalPageActions');
+  if(actions) actions.innerHTML=evalActionButtons();
+  const chrome=$('#evalChrome');
+  if(chrome) chrome.innerHTML=evalChromeHtml();
   bindEvalChrome();
 }
 function bindEvalChrome(){
   document.querySelectorAll('[data-eval-tab]').forEach(btn=>{
     btn.onclick=()=>{
+      if(!evalRequireAgent()) return;
       evalStopPoll();
       evalState.tab=btn.dataset.evalTab;
       evalPaint();
@@ -270,10 +366,24 @@ function bindEvalChrome(){
   document.querySelectorAll('[data-ds]').forEach(btn=>{
     btn.onclick=()=>evalSelectDataset(btn.dataset.ds);
   });
+  const agentFilter=$('#evalAgentFilter');
+  if(agentFilter) agentFilter.onchange=()=>{
+    evalState.agentFilter=agentFilter.value||'';
+    evalWriteStoredAgent(evalState.agentFilter);
+    evalState.datasetId='';
+    evalPaint();
+    evalHydrate();
+  };
 }
 function evalHydrate(){
+  if(!evalCurrentAgent()) return;
   if(evalState.tab==='datasets'&&evalState.datasetId) evalLoadDataset(evalState.datasetId);
+  if((evalState.tab==='report'||evalState.tab==='trace') && !evalState.runId){
+    const latest=evalAgentRuns()[0];
+    if(latest) evalState.runId=String(latest.id);
+  }
   if(evalState.tab==='report'&&evalState.runId) evalLoadReport(evalState.runId);
+  if(evalState.tab==='trace'&&evalState.runId) evalLoadTrace(evalState.runId);
 }
 function resetModalSubmit(label){
   const btn=$('#modalSubmit');
@@ -286,16 +396,73 @@ function resetModalSubmit(label){
   if(label) btn.textContent=label;
   return btn;
 }
-function evalOpenModal(title,submit,fieldsHtml,page,wide=false){
+function evalOpenModal(title,submit,fieldsHtml,page,wide=false,id=''){
   $('#modalEyebrow').textContent='数据测试';
   $('#modalTitle').textContent=title;
   resetModalSubmit(submit);
   $('#modal').classList.toggle('modal-wide',!!wide);
   $('#modalFields').innerHTML=fieldsHtml;
   $('#modalForm').dataset.page=page;
-  $('#modalForm').dataset.id='';
+  $('#modalForm').dataset.id=id?String(id):'';
   $('#modalForm').noValidate=true;
   $('#modal').showModal();
+}
+function evalDatasetFormHtml(row){
+  const agents=evalAgents();
+  const agent=evalCurrentAgent();
+  const kind=row?datasetKindOf(row):'baseline';
+  const kinds=datasetKindOrder.map(id=>`<option value="${id}" ${kind===id?'selected':''}>${datasetKindLabel[id]}</option>`).join('');
+  const selected=row?row.agent_ids:(agent?[agent.id]:[]);
+  const name=row?row.name:evalSuggestedDatasetName(kind);
+  return `<div class="field"><label>名称</label><input name="name" required maxlength="120" placeholder="例如 日常问答" value="${escapeHtml(name)}"></div>
+    <div class="field"><label>分类</label><select class="select" style="width:100%" name="kind">${kinds}</select></div>
+    <div class="field"><label>说明</label><input name="description" placeholder="这是一份测试题，不是 Agent" value="${row?escapeHtml(row.description||''):''}"></div>
+    ${row?`<section class="bind-section">
+      <div class="bind-head"><h3>绑定 Agent</h3><small id="bindAgentCount"></small></div>
+      <p class="bind-hint">只出现在勾选了的评测对象下面。改绑不会改数据集名字。</p>
+      ${bindPicker('agent','agent_ids',agents,selected,'agents','Agent')}
+    </section>`:`<input type="hidden" name="agent_ids" value="${agent?agent.id:''}">`}`;
+}
+function evalCreateDataset(){
+  if(!evalRequireAgent()) return;
+  evalOpenModal('新建数据集','创建',evalDatasetFormHtml(),'eval-dataset');
+  const kindSel=$('#modalForm [name="kind"]');
+  const nameEl=$('#modalForm [name="name"]');
+  if(kindSel&&nameEl){
+    kindSel.onchange=()=>{
+      const suggested=evalSuggestedDatasetName(kindSel.value);
+      if(!nameEl.dataset.dirty) nameEl.value=suggested;
+    };
+    nameEl.oninput=()=>{
+      nameEl.dataset.dirty=nameEl.value.trim()&&nameEl.value!==evalSuggestedDatasetName(kindSel.value)?'1':'';
+    };
+  }
+}
+function evalOpenBindExisting(){
+  const agent=evalRequireAgent();
+  const unbound=evalUnboundDatasets();
+  if(!agent) return;
+  if(!unbound.length){toast('没有未绑定的数据集');return}
+  evalOpenModal('关联到当前 Agent','绑定',`<p class="bind-hint">这些集还没有指定 Agent，不会出现在评测对象下面。勾选后绑定到「${escapeHtml(agent.name)}」。</p>${unbound.map(x=>`<label class="perm-check"><input type="checkbox" name="bind_ids" value="${x.id}"><span>${escapeHtml(datasetDisplayName(x))}</span><em>${datasetKindLabel[datasetKindOf(x)]} · ${x.case_count||0} 条</em></label>`).join('')}`,'eval-bind');
+}
+async function evalSubmitBindExisting(form){
+  const agent=evalCurrentAgent();
+  const ids=[...form.querySelectorAll('input[name="bind_ids"]:checked')].map(x=>Number(x.value));
+  if(!agent||!ids.length){toast('请勾选要关联的数据集');return}
+  for(const id of ids){
+    await api(`/api/datasets/${id}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({agent_ids:[agent.id]})});
+  }
+  $('#modal').close();
+  toast(`已绑定到「${agent.name}」`);
+  evalState.datasetId=String(ids[0]);
+  await evalReloadThen('datasets');
+}
+function evalEditDataset(){
+  if(!evalRequireAgent()) return;
+  const ds=(evalState.catalog.datasets||[]).find(x=>String(x.id)===String(evalState.datasetId));
+  if(!ds){toast('请先选择数据集');return}
+  evalOpenModal('编辑数据集','保存',evalDatasetFormHtml(ds),'eval-dataset',true,ds.id);
+  updateBindCounts();
 }
 async function evalOpenDataset(id){return evalSelectDataset(id)}
 async function evalSelectDataset(id){
@@ -312,9 +479,9 @@ async function evalLoadDataset(id){
     const ds=await api('/api/datasets/'+id);
     if(loadSeq!==evalState.loadSeq) return;
     const hit=(evalState.catalog.datasets||[]).find(x=>Number(x.id)===Number(id));
-    if(hit) hit.case_count=ds.case_count;
+    if(hit) Object.assign(hit,{name:ds.name,description:ds.description,kind:ds.kind,kind_label:ds.kind_label,agent_ids:ds.agent_ids||[],agent_names:ds.agent_names||[],case_count:ds.case_count,source_name:ds.source_name});
     const cases=ds.cases||[];
-    main.innerHTML=`<div class="eval-toolbar"><div><b>${escapeHtml(ds.name)}</b><div class="muted">${ds.case_count||0} 条 · ${escapeHtml(ds.source_name||'手动添加')}</div></div><input type="file" id="evalFile" accept=".csv,.json,.jsonl,text/csv,application/json" hidden><button class="btn ghost" onclick="$('#evalFile').click()">导入文件</button><button class="btn ghost" onclick="evalAddCase(${ds.id})">添加一条</button><button class="btn ghost danger" onclick="evalDeleteDataset(${ds.id})">删除数据集</button></div>
+    main.innerHTML=`<div class="eval-toolbar"><div><b>${escapeHtml(datasetDisplayName(ds))} ${datasetKindBadge(ds)}</b><div class="muted">${ds.case_count||0} 条用例 · ${escapeHtml(ds.source_name||'手动添加')}</div></div><input type="file" id="evalFile" accept=".csv,.json,.jsonl,text/csv,application/json" hidden><button class="btn ghost" onclick="evalEditDataset()">编辑</button><button class="btn ghost" onclick="$('#evalFile').click()">导入</button><a class="btn ghost" href="/api/datasets/template.csv">模板</a><button class="btn ghost danger" onclick="evalDeleteDataset(${ds.id})">删除</button></div>
     <table class="data-table"><thead><tr><th>编号</th><th>输入</th><th>期望</th><th></th></tr></thead><tbody>${cases.length?cases.map(c=>`<tr><td class="mono">${escapeHtml(c.case_key||c.id)}</td><td>${escapeHtml(c.input)}</td><td>${escapeHtml(c.expected||'—')}</td><td><button class="btn ghost" onclick="evalDeleteCase(${ds.id},${c.id})">删除</button></td></tr>`).join(''):'<tr><td colspan="4" class="session-empty">还没有用例。在下方填写后点「保存用例」，或导入 CSV/JSONL。</td></tr>'}</tbody></table>
     <form class="eval-add" id="evalAddForm"><div><label>用户输入 / 问题</label><textarea name="input" required placeholder="发给 Agent 的问题"></textarea></div><div><label>期望答案（可留空）</label><textarea name="expected" placeholder="用于包含/完全/正则匹配"></textarea></div><button class="btn primary" type="submit">保存用例</button></form>`;
     const file=$('#evalFile');
@@ -341,9 +508,6 @@ async function evalReloadThen(tab, opener){
   await render('evaluations');
   if(opener) await opener();
 }
-function evalCreateDataset(){
-  evalOpenModal('新建数据集','创建',`<div class="field"><label>名称</label><input name="name" required maxlength="120" placeholder="例如 客服回归集"></div><div class="field"><label>说明</label><input name="description" placeholder="可选"></div>`,'eval-dataset');
-}
 function evalAddCase(datasetId){
   evalOpenModal('添加用例','保存',`<input type="hidden" name="dataset_id" value="${datasetId}"><div class="field"><label>用户输入 / 问题</label><textarea name="input" class="skill-md" required placeholder="发给 Agent 的问题"></textarea></div><div class="field"><label>期望答案</label><textarea name="expected" class="skill-md" placeholder="可留空"></textarea></div>`,'eval-case');
 }
@@ -351,9 +515,15 @@ async function evalSubmitDataset(form){
   const data=Object.fromEntries(new FormData(form));
   const name=String(data.name||'').trim();
   if(!name){toast('请填写数据集名称');return}
-  const row=await api('/api/datasets',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,description:data.description||''})});
+  if(evalAgents().some(agent=>agent.name===name)){toast('数据集不能和 Agent 同名，请改成测试内容，例如「日常问答」');return}
+  const checked=[...form.querySelectorAll('input[name="agent_ids"]:checked')].map(x=>Number(x.value));
+  const hidden=Number(data.agent_ids||0);
+  const agent_ids=checked.length?checked:(hidden?[hidden]:(evalCurrentAgent()?[evalCurrentAgent().id]:[]));
+  const payload={name,description:data.description||'',kind:data.kind||'baseline',agent_ids};
+  const id=form.dataset.id;
+  const row=await api(id?`/api/datasets/${id}`:'/api/datasets',{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
   $('#modal').close();
-  toast('数据集已创建，请添加用例');
+  toast(id?'数据集已更新':'数据集已创建，请添加用例');
   evalState.datasetId=String(row.id);
   await evalReloadThen('datasets');
 }
@@ -379,6 +549,7 @@ async function evalDeleteCase(datasetId,caseId){
   }catch(err){toast(apiError(err)||'删除失败')}
 }
 async function evalDeleteDataset(datasetId){
+  if(!evalRequireAgent()) return;
   if(!confirm('删除整个数据集？')) return;
   try{
     await api('/api/datasets/'+datasetId,{method:'DELETE'});
@@ -388,6 +559,7 @@ async function evalDeleteDataset(datasetId){
   }catch(err){toast(apiError(err)||'删除失败')}
 }
 async function evalImportFile(datasetId,input){
+  if(!evalRequireAgent()){input.value='';return}
   const file=input.files&&input.files[0];
   if(!file) return;
   const body=new FormData();
@@ -405,17 +577,15 @@ async function evalImportFile(datasetId,input){
   input.value='';
 }
 function evalOpenLaunch(){
-  const datasets=evalState.catalog.datasets||[];
-  const agents=evalState.catalog.agents||[];
+  const agent=evalRequireAgent();
   const models=evalState.catalog.models||[];
-  const usable=datasets.filter(x=>(x.case_count||0)>0);
-  if(!agents.length){toast('请先在 Agent 管理里创建一个 Agent');return}
-  if(!datasets.length){toast('请先新建数据集并添加至少一条用例');return}
-  if(!usable.length){toast('数据集还是空的，先在下方保存至少一条用例');return}
+  if(!agent) return;
+  const usable=evalAgentDatasets().filter(x=>(x.case_count||0)>0);
+  if(!usable.length){toast('当前 Agent 还没有带用例的数据集');return}
   const preferred=usable.find(x=>String(x.id)===String(evalState.datasetId))||usable[0];
   evalOpenModal('创建测试','开始测试',`<div class="eval-form">
-    <div class="field"><label>Agent</label><select class="select" style="width:100%" name="agent_id">${agents.map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('')}</select></div>
-    <div class="field"><label>数据集</label><select class="select" style="width:100%" name="dataset_id">${usable.map(x=>`<option value="${x.id}" ${Number(x.id)===Number(preferred.id)?'selected':''}>${escapeHtml(x.name)} · ${x.case_count||0} 条</option>`).join('')}</select></div>
+    <div class="field"><label>Agent</label><input value="${escapeHtml(agent.name)}" readonly><input type="hidden" name="agent_id" value="${agent.id}"></div>
+    <div class="field"><label>数据集</label><select class="select" style="width:100%" name="dataset_id">${usable.map(x=>`<option value="${x.id}" ${Number(x.id)===Number(preferred.id)?'selected':''}>${escapeHtml(datasetDisplayName(x))} · ${datasetKindLabel[datasetKindOf(x)]} · ${x.case_count||0} 条</option>`).join('')}</select></div>
     <div class="field"><label>测试方式</label><select class="select" style="width:100%" name="mode"><option value="online">在线抽检（同步，最多 10 条）</option><option value="offline">离线回归（后台跑完全集）</option></select></div>
     <div class="field"><label>打分方式</label><select class="select" style="width:100%" name="scorer" id="evalScorer"><option value="contains">包含匹配</option><option value="exact">完全匹配</option><option value="regex">正则</option><option value="llm">LLM 判分</option></select></div>
     <div class="field wide" id="evalJudgeField" hidden><label>裁判模型</label><select class="select" style="width:100%" name="judge_model_id"><option value="">使用 Agent 自己的模型</option>${models.map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('')}</select></div>
@@ -453,6 +623,7 @@ async function evalLaunchFromForm(form){
   if(!agentId||!datasetId){toast('请选择 Agent 和带用例的数据集');return}
   const selected=(evalState.catalog.datasets||[]).find(x=>Number(x.id)===datasetId);
   if(selected&&!(selected.case_count||0)){toast('这个数据集没有用例，无法开测');return}
+  if(selected&&!datasetUsableByAgent(selected,agentId)){toast('这个数据集没有绑定当前 Agent');return}
   const payload={agent_id:agentId,dataset_id:datasetId,scorer:data.scorer||'contains',name:data.name||'',judge_model_id:data.judge_model_id?Number(data.judge_model_id):null};
   const online=data.mode!=='offline';
   const row=await api(online?'/api/evaluations/online':'/api/evaluations',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
@@ -460,6 +631,63 @@ async function evalLaunchFromForm(form){
   toast(online?'在线测试完成':'离线任务已进入队列');
   evalState.runId=row.id;
   await evalReloadThen('report');
+}
+async function evalOpenTrace(id){
+  evalState.tab='trace';
+  evalState.runId=id;
+  evalPaint();
+  await evalLoadTrace(id);
+}
+function evalToolLabel(item){
+  const called=(item.tools||[]).map(t=>String(t.title||t.name||'').replace(/^调用工具\s*/,'')).filter(Boolean);
+  if(called.length) return called.join('、');
+  return '本次未调用工具';
+}
+function evalModelLabel(item){
+  const name=item.model_name||'';
+  const id=item.model_id||'';
+  if(name&&id&&id!==name) return name+' · '+id;
+  return name||id||'未知模型';
+}
+function evalRequestTraceHtml(item,index){
+  const spans=item.spans||[];
+  const steps=spans.length?spans.map(span=>`<div class="trace-step ${span.status||'ok'}">
+    <i class="trace-dot"></i>
+    <div class="trace-card">
+      <div class="trace-card-top"><b>${escapeHtml(span.title||span.name||'')}</b>${span.duration_ms?`<span>${span.duration_ms} ms</span>`:''}</div>
+      ${span.detail?`<p>${escapeHtml(span.detail)}</p>`:''}
+    </div>
+  </div>`).join(''):'<div class="muted">这次请求没有保存步骤。重跑后可以看到模型和工具明细。</div>';
+  const tokens=item.tokens||((item.input_tokens||0)+(item.output_tokens||0));
+  const tokenHint=(item.input_tokens||item.output_tokens)?`输入 ${item.input_tokens||0} · 输出 ${item.output_tokens||0}`:`共 ${tokens||0}`;
+  return `<article class="eval-req">
+    <div class="eval-req-head"><div><b>请求 ${index+1}</b> ${pill(item.status)}<div class="muted">用例 ${escapeHtml(item.case_key||item.id||'')} · ${escapeHtml(item.reason||item.error||'')}</div></div></div>
+    <div class="eval-facts">
+      <div class="eval-fact"><small>模型</small><b>${escapeHtml(evalModelLabel(item))}</b></div>
+      <div class="eval-fact"><small>调用的工具</small><b>${escapeHtml(evalToolLabel(item))}</b>${item.bound_tools?`<span class="muted">已绑定：${escapeHtml(item.bound_tools)}</span>`:''}</div>
+      <div class="eval-fact"><small>Token</small><b>${fmt(tokens||0)}</b><span class="muted">${escapeHtml(tokenHint)}</span></div>
+      <div class="eval-fact"><small>耗时</small><b>${item.latency_ms||0} ms</b></div>
+    </div>
+    <div class="eval-io">
+      <div><small>输入</small><pre>${escapeHtml(item.input||'')}</pre></div>
+      <div><small>输出</small><pre>${escapeHtml(item.actual||'')}</pre></div>
+    </div>
+    <small class="muted">执行步骤</small>
+    <div class="eval-trace-list">${steps}</div>
+  </article>`;
+}
+async function evalLoadTrace(id){
+  const main=$('#evalTraceMain'); if(!main) return;
+  try{
+    const run=await api('/api/evaluations/'+id);
+    const rows=run.results||[];
+    const idx=(evalState.catalog.runs||[]).findIndex(x=>x.id===id);
+    if(idx>=0) evalState.catalog.runs[idx]=run;
+    const running=run.status==='running'||run.status==='queued';
+    const body=rows.length?rows.map((item,i)=>evalRequestTraceHtml(item,i)).join(''):`<div class="empty">${running?'正在执行…':'这次任务还没有请求记录。'}</div>`;
+    main.innerHTML=`<div class="eval-toolbar"><div><b>${escapeHtml(run.name)} · 请求追踪</b><div class="muted">${escapeHtml(run.agent_name)} · ${escapeHtml(run.dataset)} · ${rows.length} 次请求 · ${pill(run.status)}</div></div><button class="btn ghost" onclick="evalOpenReport(${run.id})">报告</button><button class="btn ghost" onclick="evalRerun(${run.id})">重跑</button></div>${body}`;
+    if(running) evalStartPoll(id); else evalStopPoll();
+  }catch(e){main.innerHTML='<div class="empty">追踪加载失败</div>'}
 }
 async function evalOpenReport(id){
   evalState.tab='report';
@@ -475,7 +703,7 @@ async function evalLoadReport(id){
     const idx=(evalState.catalog.runs||[]).findIndex(x=>x.id===id);
     if(idx>=0) evalState.catalog.runs[idx]=run;
     const running=run.status==='running'||run.status==='queued';
-    main.innerHTML=`<div class="eval-toolbar"><div><b>${escapeHtml(run.name)}</b><div class="muted">${escapeHtml(run.agent_name)} · ${escapeHtml(run.dataset)} · ${scorerLabel[run.scorer]||run.scorer} · ${pill(run.status)}</div></div><a class="btn ghost" href="/api/evaluations/${run.id}/export.csv">导出 CSV</a><button class="btn ghost" onclick="evalRerun(${run.id})">按同样配置重跑</button>${(run.failed||0)>0&&!running?`<button class="btn ghost" onclick="evalResume(${run.id})">从失败续跑</button>`:''}</div>
+    main.innerHTML=`<div class="eval-toolbar"><div><b>${escapeHtml(run.name)}</b><div class="muted">${escapeHtml(run.agent_name)} · ${escapeHtml(run.dataset)} · ${scorerLabel[run.scorer]||run.scorer} · ${pill(run.status)}</div></div><button class="btn ghost" onclick="evalOpenTrace(${run.id})">追踪</button><a class="btn ghost" href="/api/evaluations/${run.id}/export.csv">导出 CSV</a><button class="btn ghost" onclick="evalRerun(${run.id})">按同样配置重跑</button>${(run.failed||0)>0&&!running?`<button class="btn ghost" onclick="evalResume(${run.id})">从失败续跑</button>`:''}</div>
     <div class="eval-metrics">
       <div class="eval-metric"><span>通过率</span><b>${run.status==='completed'||run.judged?run.score+'%':'—'}</b></div>
       <div class="eval-metric"><span>通过 / 失败 / 跳过</span><b>${run.passed||0} / ${run.failed||0} / ${run.skipped||0}</b></div>
@@ -489,7 +717,12 @@ async function evalLoadReport(id){
 }
 function evalStartPoll(id){
   evalStopPoll();
-  evalState.poll=setInterval(()=>{if(evalState.tab==='report'&&String(evalState.runId)===String(id))evalLoadReport(id);else evalStopPoll()},2000);
+  evalState.poll=setInterval(()=>{
+    if(String(evalState.runId)!==String(id)){evalStopPoll();return}
+    if(evalState.tab==='report') evalLoadReport(id);
+    else if(evalState.tab==='trace') evalLoadTrace(id);
+    else evalStopPoll();
+  },2000);
 }
 function evalStopPoll(){if(evalState.poll){clearInterval(evalState.poll);evalState.poll=null}}
 async function evalRerun(id){
@@ -1105,6 +1338,8 @@ function bindPicker(kind, name, rows, selected, emptyPage, emptyLabel){
     const tools=x.tools||[];
     const meta=kind==='mcp'
       ? `${mcpTransportLabel(x.transport)} · ${x.endpoint||'MCP'} · ${tools.length||x.tools_count||0} 个工具`
+      : kind==='agent'
+      ? `${x.model_name||'Agent'} · ${x.status||''}`
       : `${x.description||'Skill'} · ${x.version||''}`;
     return `<label class="bind-option" data-search="${escapeHtml(`${x.name} ${meta}`.toLowerCase())}">
       <input type="checkbox" name="${name}" value="${x.id}" ${ids.includes(x.id)?'checked':''}>
@@ -1153,8 +1388,9 @@ function updateBindCounts(){
   form.querySelectorAll('.bind-picker').forEach(picker=>{
     const boxes=[...picker.querySelectorAll('input[type="checkbox"]')];
     const checked=boxes.filter(x=>x.checked);
-    const noun=picker.dataset.bind==='mcp'?'MCP 工具':'技能';
-    const countEl=picker.dataset.bind==='mcp'?$('#bindMcpCount'):$('#bindSkillCount');
+    const nouns={mcp:'MCP 工具',skill:'技能',agent:'Agent'};
+    const noun=nouns[picker.dataset.bind]||'项目';
+    const countEl=picker.dataset.bind==='mcp'?$('#bindMcpCount'):picker.dataset.bind==='skill'?$('#bindSkillCount'):$('#bindAgentCount');
     if(countEl) countEl.textContent=boxes.length?`${checked.length?`已选 ${checked.length} 个`:'未选择'} · 共 ${boxes.length} 个`:'未选择';
     const summary=picker.querySelector('.bind-picker-summary');
     if(!summary) return;
@@ -1290,6 +1526,10 @@ $('#modalForm').addEventListener('submit',async e=>{
     try{await submitRenameAgent(form)}catch(err){toast(apiError(err)||'重命名失败')}
     return;
   }
+  if(page==='eval-bind'){
+    try{await evalSubmitBindExisting(form)}catch(err){toast(apiError(err)||'绑定失败')}
+    return;
+  }
   if(page==='eval-dataset'){
     try{await evalSubmitDataset(form)}catch(err){toast(apiError(err)||'创建数据集失败')}
     return;
@@ -1360,7 +1600,7 @@ function closeBindPickers(except){
   });
 }
 $('#modalForm').addEventListener('change', e=>{
-  if(e.target && (e.target.name==='mcp_ids' || e.target.name==='skill_ids')) updateBindCounts();
+  if(e.target && (e.target.name==='mcp_ids' || e.target.name==='skill_ids' || e.target.name==='agent_ids')) updateBindCounts();
 });
 $('#modalForm').addEventListener('click', e=>{
   const chip=e.target.closest('.bind-chip-x');

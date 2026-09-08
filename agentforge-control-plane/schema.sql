@@ -258,6 +258,8 @@ CREATE TABLE IF NOT EXISTS datasets (
   name VARCHAR(120) NOT NULL,
   description VARCHAR(300) NOT NULL,
   source_name VARCHAR(255) NOT NULL,
+  kind VARCHAR(24) NOT NULL,
+  agent_ids JSON NOT NULL,
   case_count INTEGER NOT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
@@ -265,6 +267,7 @@ CREATE TABLE IF NOT EXISTS datasets (
   owner_id INTEGER,
   PRIMARY KEY (id),
   KEY ix_datasets_name (name),
+  KEY ix_datasets_kind (kind),
   KEY ix_datasets_tenant_id (tenant_id),
   KEY ix_datasets_owner_id (owner_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
