@@ -63,7 +63,7 @@ class AgentCreate(BaseModel):
 
 class SandboxCreate(BaseModel):
     name: str
-    runtime: str = "python:3.11"
+    runtime: str = "docker:python:3.11-slim"
     cpu_limit: str = "1 vCPU"
     memory_limit: str = "1 GiB"
     timeout_seconds: int = Field(default=60, ge=1, le=3600)
@@ -220,6 +220,8 @@ class DatasetCaseCreate(BaseModel):
     expected: str = ""
     case_key: str = ""
     tags: list[str] = []
+    extra: dict[str, Any] = {}
+    solution: str = ""
 
 
 class LoginRequest(BaseModel):
@@ -257,3 +259,11 @@ class EvaluationLaunch(BaseModel):
     scorer: str = "contains"
     judge_model_id: Optional[int] = None
     case_ids: list[int] = []
+
+
+class PerformanceLaunch(BaseModel):
+    agent_id: int
+    dataset_id: int
+    name: str = ""
+    concurrency: int = Field(default=3, ge=1, le=8)
+    requests: int = Field(default=12, ge=1, le=80)

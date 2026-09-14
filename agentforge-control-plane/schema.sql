@@ -314,6 +314,7 @@ CREATE TABLE IF NOT EXISTS evaluation_runs (
   skipped INTEGER NOT NULL,
   avg_latency_ms INTEGER NOT NULL,
   total_tokens INTEGER NOT NULL,
+  metrics JSON NOT NULL,
   error_message TEXT NOT NULL,
   started_at DATETIME,
   finished_at DATETIME,

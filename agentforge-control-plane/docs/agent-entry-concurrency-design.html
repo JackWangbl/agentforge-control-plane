@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<title>AgentForge 控制平面 · Agent 入口高并发技术方案</title>
+<style>
+  @page {
+    size: A4;
+    margin: 18mm 16mm 20mm 16mm;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    color: #1a1d23;
+    background: #fff;
+    font: 11pt/1.65 "PingFang SC", "Hiragino Sans GB", "Songti SC", "Noto Sans CJK SC", sans-serif;
+  }
+  .page { max-width: 210mm; margin: 0 auto; }
+  header.cover {
+    border-bottom: 2px solid #1a1d23;
+    padding: 8px 0 18px;
+    margin-bottom: 22px;
+  }
+  .kicker {
+    font-size: 9pt;
+    letter-spacing: 0.12em;
+    color: #5b6472;
+    text-transform: uppercase;
+    margin: 0 0 8px;
+  }
+  h1 {
+    font-size: 22pt;
+    line-height: 1.25;
+    margin: 0 0 10px;
+    font-weight: 650;
+  }
+  .subtitle {
+    color: #3d4553;
+    margin: 0 0 14px;
+    font-size: 11pt;
+  }
+  .meta {
+    display: flex;
+    gap: 18px;
+    flex-wrap: wrap;
+    font-size: 9.5pt;
+    color: #5b6472;
+  }
+  h2 {
+    font-size: 14pt;
+    margin: 26px 0 10px;
+    padding-top: 6px;
+    border-top: 1px solid #d8dde6;
+    font-weight: 650;
+  }
+  h3 {
+    font-size: 12pt;
+    margin: 18px 0 8px;
+    font-weight: 600;
+  }
+  p { margin: 0 0 10px; }
+  ul, ol { margin: 0 0 12px; padding-left: 1.3em; }
+  li { margin: 0 0 4px; }
+  code, .mono {
+    font-family: "SF Mono", Menlo, Consolas, monospace;
+    font-size: 0.88em;
+    background: #f3f5f8;
+    padding: 0.05em 0.35em;
+    border-radius: 3px;
+  }
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 9.5pt;
+    margin: 8px 0 16px;
+    page-break-inside: auto;
+  }
+  th, td {
+    border: 1px solid #d0d6e0;
+    padding: 7px 8px;
+    vertical-align: top;
+    text-align: left;
+  }
+  th {
+    background: #f4f6f9;
+    font-weight: 600;
+  }
+  tr { page-break-inside: avoid; }
+  .callout {
+    border: 1px solid #cfd6e2;
+    background: #f7f8fb;
+    padding: 10px 12px;
+    margin: 12px 0 16px;
+    page-break-inside: avoid;
+  }
+  .callout.warn { border-left: 3px solid #b45309; }
+  .callout.info { border-left: 3px solid #2563eb; }
+  .callout.ok { border-left: 3px solid #15803d; }
+  .callout .t { font-weight: 650; margin-bottom: 4px; }
+  .stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr 1fr;
+    gap: 8px;
+    margin: 12px 0 16px;
+  }
+  .stat {
+    border: 1px solid #d0d6e0;
+    padding: 10px 10px 8px;
+    page-break-inside: avoid;
+  }
+  .stat b { display: block; font-size: 12pt; margin-bottom: 2px; }
+  .stat span { font-size: 8.5pt; color: #5b6472; }
+  .flow {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin: 10px 0 16px;
+    font-size: 9pt;
+  }
+  .flow .n {
+    border: 1px solid #1a1d23;
+    padding: 7px 9px;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+  .flow .n.hot { background: #eef2f7; }
+  .flow .a { color: #6b7380; padding: 0 2px; }
+  .bar {
+    display: flex;
+    height: 14px;
+    width: 100%;
+    margin: 6px 0 4px;
+    border: 1px solid #d0d6e0;
+    overflow: hidden;
+  }
+  .bar i { display: block; height: 100%; }
+  .legend { font-size: 8.5pt; color: #5b6472; margin: 0 0 16px; }
+  .cards {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr 1fr;
+    gap: 8px;
+    margin: 8px 0 16px;
+  }
+  .card {
+    border: 1px solid #d0d6e0;
+    padding: 10px 12px;
+    page-break-inside: avoid;
+  }
+  .card .h { font-weight: 650; margin-bottom: 6px; font-size: 10.5pt; }
+  .card .tag { font-size: 8pt; color: #5b6472; font-weight: 500; }
+  footer.note {
+    margin-top: 28px;
+    padding-top: 10px;
+    border-top: 1px solid #d8dde6;
+    font-size: 8.5pt;
+    color: #6b7380;
+  }
+  @media print {
+    a { color: inherit; text-decoration: none; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="cover">
+    <p class="kicker">AgentForge Control Plane · Technical Design</p>
+    <h1>Agent 入口高并发技术方案</h1>
+    <p class="subtitle">
+      针对正常 Agent 入口 <code>POST /api/playground/run</code>（含 <code>resume</code>）：
+      对话仍在请求路径上返回；用限流、舱壁、熔断挡住下游；Studio / Langfuse / 重 Trace 进异步队列；
+      Agent、Skill、MCP、模型配置走多级缓存。
+    </p>
+    <div class="meta">
+      <span>文档类型：评审用设计稿（尚未改代码）</span>
+      <span>范围：调试台 Agent 入口，不含 RAG ingest</span>
+      <span>日期：2026-09-09</span>
+    </div>
+  </header>
+
+  <div class="callout warn">
+    <div class="t">原则：用户等的是这一轮回复</div>
+    把整次 <code>generate_chat_reply</code> 丢进 Celery 只会让调试台变慢、会话状态更难续跑。
+    队列只承接「用户已经拿到回复之后」的工作。
+  </div>
+
+  <h2>1. 现状瓶颈</h2>
+  <p>
+    当前一轮调试是同步串起来的：鉴权 → 查 Agent / Skill / MCP →
+    <code>complete_chat</code>（httpx 最长 45s，最多 4–8 轮工具循环）→ 写会话 →
+    <strong>等 Studio 导出完才返回</strong>。评测是单 daemon 线程每 1.2s 扫 MySQL。
+    高并发时，慢的是模型，卡死的是 uvicorn 线程和观测导出。
+  </p>
+  <div class="stats">
+    <div class="stat"><b>同步占满</b><span>LLM 45s 阻塞 uvicorn 线程</span></div>
+    <div class="stat"><b>1 线程</b><span>评测工人轮询 MySQL</span></div>
+    <div class="stat"><b>无共享配额</b><span>租户 / 模型没有并发上限</span></div>
+    <div class="stat"><b>侧效应同步</b><span>Studio 导出卡在返回前</span></div>
+  </div>
+
+  <h2>2. 目标请求路径</h2>
+  <p>热路径：准入 → 读缓存快照 → 占一个 Agent / 模型槽位 → 调模型与工具 → 写会话后立刻返回。冷路径：观测导出与评测。</p>
+  <div class="flow">
+    <span class="n">调试台</span><span class="a">→</span>
+    <span class="n">限流准入</span><span class="a">→</span>
+    <span class="n hot">playground/run</span><span class="a">→</span>
+    <span class="n">配置快照</span><span class="a">→</span>
+    <span class="n">舱壁+熔断</span><span class="a">→</span>
+    <span class="n hot">模型/工具</span><span class="a">→</span>
+    <span class="n">落会话</span><span class="a">→</span>
+    <span class="n">侧效应队列</span>
+  </div>
+
+  <h3>2.1 一次 playground/run 时间花在哪</h3>
+  <p style="margin-bottom:4px;font-size:9.5pt;color:#5b6472;">典型一轮（有密钥、1–2 次模型调用）· 估算占比，非压测数据</p>
+  <div class="bar">
+    <i style="width:72%;background:#c4c9d2;"></i>
+    <i style="width:12%;background:#9aa3b2;"></i>
+    <i style="width:8%;background:#7d8796;"></i>
+    <i style="width:5%;background:#5c6573;"></i>
+    <i style="width:3%;background:#3d4553;"></i>
+  </div>
+  <p class="legend">72% 模型调用 · 12% 工具 · 8% Studio 导出 · 5% 会话落库 · 3% 读 Agent / Skill / MCP</p>
+
+  <h3>2.2 三类流量分开，不要抢同一条管道</h3>
+  <table>
+    <thead>
+      <tr><th>入口</th><th>用户是否在等</th><th>策略</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td><code>POST /api/playground/run</code> | <code>resume</code></td>
+        <td>是，要这一轮回复</td>
+        <td>同步或 SSE；限流 + 舱壁 + 熔断；配置走缓存</td>
+      </tr>
+      <tr>
+        <td>离线评测 <code>EvaluationRun</code></td>
+        <td>否</td>
+        <td>独立 eval 队列与 worker，禁止占用 playground 槽位</td>
+      </tr>
+      <tr>
+        <td>Studio / Langfuse / 仪表盘汇总</td>
+        <td>否</td>
+        <td>observe 队列，失败可丢可重试，绝不能拖住 JSON 返回</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h3>2.3 建议组件（生产最小集）</h3>
+  <div class="cards">
+    <div class="card">
+      <div class="h">Redis <span class="tag">共享状态</span></div>
+      令牌桶计数、熔断器状态、L2 缓存、队列 broker。多 uvicorn worker 必须共享，进程内字典不够。
+    </div>
+    <div class="card">
+      <div class="h">FastAPI <span class="tag">热路径</span></div>
+      鉴权、准入、读快照、调模型、写 Conversation / ChatMessage。<code>complete_chat</code> 改异步 httpx，避免一个 45s 调用占死线程。
+    </div>
+    <div class="card">
+      <div class="h">Worker <span class="tag">冷路径</span></div>
+      ARQ 或 Celery：studio.export、langfuse.export、eval.run、mcp.refresh。业务状态仍以 MySQL 为准。
+    </div>
+  </div>
+
+  <h2>3. 熔断与限流</h2>
+  <h3>3.1 限流：四层漏斗，专打 Agent 入口</h3>
+  <p>
+    只做全局限流会被一个租户或一个慢模型拖死。playground 按租户、用户、Agent 并发、模型供应商四层扣配额，
+    先满先拒，返回 429 并带 <code>Retry-After</code>。
+  </p>
+  <table>
+    <thead>
+      <tr><th>层</th><th>键</th><th>默认建议</th><th>挡住什么</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>租户 QPS</td><td><code>tenant_id</code></td><td>30 req/s，突发 60</td><td>某个租户刷调试台</td></tr>
+      <tr><td>用户 QPS</td><td><code>user_id</code></td><td>5 req/s，突发 10</td><td>单人连点发送</td></tr>
+      <tr><td>Agent 在途</td><td><code>agent_id</code> 信号量</td><td>每 Agent 8 路</td><td>同一 Agent 把模型配额打满</td></tr>
+      <tr><td>模型供应商</td><td><code>provider + model_id</code></td><td>按密钥档位，如 20 在途</td><td>触发 DashScope / OpenAI 429</td></tr>
+    </tbody>
+  </table>
+
+  <h3>3.2 舱壁（bulkhead）</h3>
+  <p>
+    playground、eval、sandbox、browser 四个池子，互不借用。浏览器工具现在是进程级一把锁，
+    高并发下应改为「每租户 1 个浏览器会话」，不要让评测和打开网页堵住对话。
+  </p>
+
+  <h3>3.3 熔断：按下游，不要按整站</h3>
+  <table>
+    <thead>
+      <tr><th>下游</th><th>打开条件</th><th>打开时入口行为</th><th>半开</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>LLM <code>complete_chat</code></td>
+        <td>连续 5 次超时 / 5xx / 429，或 30s 错误率 &gt; 50%</td>
+        <td>立即失败，返回已有检查点 + 可 resume；不打预览假成功</td>
+        <td>放 1 路试探，成功则闭合</td>
+      </tr>
+      <tr>
+        <td>单个 MCP HTTP</td>
+        <td>连续 3 次失败或超时</td>
+        <td>该工具从本轮 tools 列表摘掉，其它工具继续</td>
+        <td>后台 mcp.refresh 探测成功后恢复</td>
+      </tr>
+      <tr>
+        <td>沙箱执行</td>
+        <td>超时 / 后端不可用</td>
+        <td>本轮拒绝 <code>sandbox_*</code>，对话仍返回</td>
+        <td><code>probe_sandbox</code> 成功后恢复</td>
+      </tr>
+      <tr>
+        <td>Studio / Langfuse</td>
+        <td>连续失败</td>
+        <td>请求路径直接跳过，任务进死信或丢弃</td>
+        <td>观察队列自动重试</td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="callout info">
+    <div class="t">失败语义要和现有检查点对齐</div>
+    <code>generate_chat_reply</code> 已会把 running / failed 写入 workspace checkpoint。
+    熔断触发时应走同一套：前端仍可点续跑，不要另造一套「降级预览」冒充模型已调用。
+  </div>
+
+  <h2>4. 异步任务队列</h2>
+  <p>
+    现状：评测是单 daemon 线程每 1.2s <code>SELECT queued</code>；Studio 导出在
+    <code>_finalize_playground</code> 里同步 httpx。高并发下这两处会直接拉长 Agent 入口 P99。
+  </p>
+  <table>
+    <thead>
+      <tr><th>队列</th><th>任务</th><th>何时入队</th><th>并发</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>observe</td>
+        <td>studio.export / langfuse.export</td>
+        <td>会话 commit 成功之后</td>
+        <td>高，可丢，重试 3 次</td>
+      </tr>
+      <tr>
+        <td>eval</td>
+        <td>evaluation.execute</td>
+        <td>创建离线回归时</td>
+        <td>低，按模型舱壁限流，与 playground 隔离</td>
+      </tr>
+      <tr>
+        <td>refresh</td>
+        <td>mcp.probe / sandbox.probe / dashboard.rollups</td>
+        <td>定时或配置变更</td>
+        <td>中，写回 L2 缓存</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3>4.1 入口返回前必须做完的</h3>
+  <p>
+    写 ChatMessage、Conversation、本地 checkpoint、给前端的 reply / session_id / spans。
+    这些失败应让请求失败，不能「先返回再补写会话」，否则 resume 会对不上。
+  </p>
+  <h3>4.2 可以延后的</h3>
+  <p>
+    persist_run 里非检查点的大文件、Studio OTLP、Langfuse、仪表盘计数、MCP 工具列表刷新。
+    入口只投递 job_id，UI 轮询或忽略均可。
+  </p>
+  <div class="callout warn">
+    <div class="t">评测不要再 poll MySQL</div>
+    <code>_claim_run</code> 无 <code>SELECT FOR UPDATE</code>，多进程会抢同一条。改为 Redis 队列，
+    EvaluationRun 只作状态机；worker 用和 playground 同一套 <code>generate_chat_reply</code>，但走 eval 舱壁。
+  </div>
+
+  <h2>5. 多级缓存</h2>
+  <p>
+    Agent 回复几乎每次都不同，默认不要缓存 <code>chat/completions</code>。
+    要缓存的是入口每次都打库的那几样：Agent 绑定、Skill 正文、MCP 工具 schema、模型端点、RBAC。
+  </p>
+  <table>
+    <thead>
+      <tr><th>级</th><th>介质</th><th>存什么</th><th>TTL / 失效</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>L1</td>
+        <td>进程内</td>
+        <td>当前用户、角色权限、Agent 快照、Skill 正文、MCP tools JSON</td>
+        <td>30–60s；写路径 pub/sub 立刻删</td>
+      </tr>
+      <tr>
+        <td>L2</td>
+        <td>Redis</td>
+        <td>上述快照跨进程、MCP probe 结果、仪表盘汇总、熔断器 counters</td>
+        <td>2–5 min；配置保存时主动删</td>
+      </tr>
+      <tr>
+        <td>L3</td>
+        <td>MySQL</td>
+        <td>事实来源：Agent / Skill / Model / Conversation</td>
+        <td>不设 TTL；会话与检查点仍以库和 workspace 为准</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3>5.1 入口读路径（命中时）</h3>
+  <p>
+    playground/run 不再 <code>selected_skills</code> + <code>skill_instruction</code> + <code>list_mcp_tools</code>
+    连环查库，而是 <code>get_agent_runtime_snapshot(agent_id)</code>：系统提示已拼好、tools schema 已备好、
+    模型 base_url 已解析。密钥不进 Redis 明文，L1 只留「是否就绪」和从环境变量现取。
+  </p>
+  <div class="cards" style="grid-template-columns:1fr 1fr;">
+    <div class="card">
+      <div class="h">要缓存</div>
+      dump(agent) 绑定列表、SKILL.md 正文、MCP 工具名与 parameters、沙箱策略、实验分流结果（同一 session_id）、dashboard 聚合。
+    </div>
+    <div class="card">
+      <div class="h">不要缓存</div>
+      模型生成结果、工具执行输出、API Key、checkpoint 工作集（正在跑的 pending_tools）。会话消息可短 TTL 热读，写入仍以 MySQL 为准。
+    </div>
+  </div>
+
+  <h2>6. 落地节奏</h2>
+  <table>
+    <thead>
+      <tr><th>期</th><th>改动</th><th>入口立刻获得什么</th><th>完成标准</th></tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>P0 本进程</td>
+        <td>asyncio httpx；租户/用户令牌桶；LLM / MCP / Studio 熔断；Studio 改 fire-and-forget 线程</td>
+        <td>慢导出不再拖 P99；模型挂了快速失败</td>
+        <td>单机压测 playground 在途数可控，Studio 挂掉不影响 200</td>
+      </tr>
+      <tr>
+        <td>P1 Redis</td>
+        <td>共享限流与熔断；L2 配置快照；observe + eval 真队列</td>
+        <td>多 worker 配额一致；评测不再抢对话槽</td>
+        <td>两进程 uvicorn 限流不翻倍；eval 与 chat 隔离</td>
+      </tr>
+      <tr>
+        <td>P2 流式与配额面板</td>
+        <td>playground SSE / stream；管理台看到熔断状态与队列积压；按租户配额配置</td>
+        <td>首 token 更快；运营能看到谁被限</td>
+        <td>前端能续跑；429 / 熔断有明确文案</td>
+      </tr>
+    </tbody>
+  </table>
+  <h3>6.1 明确不做</h3>
+  <ul>
+    <li>不把整次对话变成「提交任务再轮询结果」——现有 checkpoint / resume 已经覆盖失败续跑。</li>
+    <li>不上服务网格也能先做应用内熔断。</li>
+    <li>不把 FAISS / RAG 塞进这条入口，那是另一条 ingest 链路。</li>
+  </ul>
+  <div class="callout ok">
+    <div class="t">若方案可接受，第一刀建议</div>
+    拆 <code>_finalize_playground</code>：会话与 Trace 仍同步 commit；<code>export_playground_to_studio</code>
+    与 Langfuse 改为入队。同时给 <code>complete_chat</code> 加按 provider 的熔断和在途信号量。
+    这两处改动面最小、对入口收益最大。
+  </div>
+
+  <footer class="note">
+    源：AgentForge Control Plane · playground/run → generate_chat_reply → complete_chat（httpx 45s）→ _finalize_playground。<br />
+    本文档由评审设计稿导出，供内部传阅；实施前以评审结论为准。
+  </footer>
+</div>
+</body>
+</html>

@@ -58,19 +58,29 @@ from app.services.agent_workspace import (
     save_checkpoint,
     workspace_status,
 )
+from app.services.browser_runtime import close_browser
+from app.services.execution_context import (
+    ExecutionContext,
+    reset_execution_context,
+    set_execution_context,
+)
+from app.services.tenant_resources import validate_agent_bindings
 from app.services.langfuse_tracer import observability_status, public_trace_url
 from app.services.studio_tracer import export_playground_to_studio
 from app.seed import ensure_iam, purge_demo_observability_data, repair_dataset_agent_name_collisions, seed_database
+from app.services.eval_catalog import ensure_eval_catalog
 from app.services.agentscope_adapter import complete_chat, initialize_agentscope
 from app.services.mcp_stream import (
     apply_discovered_tools,
     is_http_stream_transport,
     merge_mcp_config,
+    public_mcp_config,
     normalize_mcp_transport,
     probe_streamable_http,
     transport_label,
 )
 from app.services.sandbox_runtime import (
+    backend_ready,
     detect_backends,
     preferred_backend,
     probe_sandbox,
@@ -130,6 +140,11 @@ async def lifespan(_: FastAPI):
     with SessionLocal() as db:
         seed_database(db)
         ensure_iam(db)
+        try:
+            ensure_eval_catalog(db)
+        except Exception:
+            import logging
+            logging.getLogger("uvicorn.error").exception("ensure_eval_catalog failed")
         repair_dataset_agent_name_collisions(db)
         purge_demo_observability_data(db)
         purge_junk_and_seed_tools(db)
@@ -164,6 +179,7 @@ def dump(row: Any) -> dict[str, Any]:
         data["tools_count"] = len(tools) if tools else row.tools_count
         data["runnable"] = is_builtin_mcp(row) or (is_http_stream_transport(row.transport) and bool(tools))
         data["transport_label"] = transport_label(row.transport)
+        data["config"] = public_mcp_config(row.config)
     if isinstance(row, Skill):
         instruction = skill_instruction(row)
         data["instruction"] = instruction
@@ -187,17 +203,24 @@ def dump(row: Any) -> dict[str, Any]:
         data["sandbox_id"] = row.sandbox_id
         data["sandbox_name"] = ""
         if db is not None and row.sandbox_id:
-            box = db.get(SandboxPolicy, row.sandbox_id)
+            box = selected_sandbox(row, db)
             data["sandbox_name"] = box.name if box else ""
     if isinstance(row, SandboxPolicy):
         data["backend"] = preferred_backend(row)
         data["available_backends"] = detect_backends()
-        data["runnable"] = True
+        data["runnable"] = backend_ready(row)
     if isinstance(row, Trace):
         data["spans"] = row.spans or []
         data["langfuse_url"] = public_trace_url(row.langfuse_url or "", row.trace_id or "")
     if isinstance(row, EvaluationRun):
-        return dump_run(row)
+        db = object_session(row)
+        judge_name = ""
+        if db is not None and row.judge_model_id:
+            judge = db.get(ModelConfig, row.judge_model_id)
+            judge_name = judge.name if judge else ""
+        elif row.scorer == "llm":
+            judge_name = "评测裁判 · Qwen-Max"
+        return dump_run(row, judge_name=judge_name)
     if isinstance(row, Dataset):
         data["description"] = row.description or ""
         data["source_name"] = row.source_name or ""
@@ -294,6 +317,36 @@ def build_debug_spans(agent: Agent, model: ModelConfig, mode: str, tool_spans: l
 
 
 def generate_chat_reply(
+    agent: Agent,
+    model: ModelConfig,
+    history: list[dict[str, Any]],
+    db: Session,
+    *,
+    session_id: Optional[str] = None,
+    resume: bool = False,
+    force_rerun_tools: bool = False,
+) -> tuple[str, str, list[dict[str, Any]], dict[str, Any]]:
+    context = ExecutionContext.for_agent(
+        agent,
+        f"{session_id or 'one-shot'}-{new_trace_id()}",
+    )
+    token = set_execution_context(context)
+    try:
+        return _generate_chat_reply_impl(
+            agent,
+            model,
+            history,
+            db,
+            session_id=session_id,
+            resume=resume,
+            force_rerun_tools=force_rerun_tools,
+        )
+    finally:
+        close_browser(context.scope_key)
+        reset_execution_context(token)
+
+
+def _generate_chat_reply_impl(
     agent: Agent,
     model: ModelConfig,
     history: list[dict[str, Any]],
@@ -572,7 +625,15 @@ def create_workflow(payload: WorkflowCreate, user: CurrentUser = Depends(require
 
 @app.post("/api/agents", status_code=201)
 def create_agent(payload: AgentCreate, user: CurrentUser = Depends(require_permission("agent:write")), db: Session = Depends(get_db)) -> dict[str, Any]:
-    row = stamp_owner(Agent(**payload.model_dump()), user)
+    data = payload.model_dump()
+    validate_agent_bindings(
+        db,
+        user.tenant_id,
+        skill_ids=data.get("skill_ids"),
+        mcp_ids=data.get("mcp_ids"),
+        sandbox_id=data.get("sandbox_id"),
+    )
+    row = stamp_owner(Agent(**data), user)
     db.add(row)
     db.commit()
     db.refresh(row)
@@ -711,6 +772,14 @@ def update_resource(resource: str, item_id: int, payload: dict[str, Any] = Body(
             data["config"] = merge_mcp_config(getattr(row, "config", None), data.get("config"))
     if resource == "agents" and data.get("name") is not None:
         data["name"] = require_unique_agent_name(db, data["name"], exclude_id=item_id)
+    if resource == "agents":
+        validate_agent_bindings(
+            db,
+            user.tenant_id,
+            skill_ids=data.get("skill_ids"),
+            mcp_ids=data.get("mcp_ids"),
+            sandbox_id=data.get("sandbox_id") if "sandbox_id" in data else None,
+        )
     for key, value in data.items():
         setattr(row, key, value)
     if resource == "skills":
@@ -881,7 +950,11 @@ def run_playground(payload: PlaygroundRun, user: CurrentUser = Depends(require_p
     if not history:
         history = [
             {"role": row.role, "content": row.content}
-            for row in db.scalars(select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.id)).all()
+            for row in db.scalars(select(ChatMessage).where(
+                ChatMessage.session_id == session_id,
+                ChatMessage.tenant_id == user.tenant_id,
+                ChatMessage.agent_id == agent.id,
+            ).order_by(ChatMessage.id)).all()
         ]
     history.append({"role": "user", "content": payload.message})
     started = datetime.utcnow()
@@ -1074,7 +1147,11 @@ def _finalize_playground(
     db.commit()
     messages = persisted.get("messages") or [
         {"role": row.role, "content": row.content, "agent_name": row.agent_name}
-        for row in db.scalars(select(ChatMessage).where(ChatMessage.session_id == session_id).order_by(ChatMessage.id)).all()
+        for row in db.scalars(select(ChatMessage).where(
+            ChatMessage.session_id == session_id,
+            ChatMessage.tenant_id == user.tenant_id,
+            ChatMessage.agent_id == agent.id,
+        ).order_by(ChatMessage.id)).all()
     ]
     return {
         "mode": mode,
@@ -1103,5 +1180,3 @@ def playground_session(session_id: str, user: CurrentUser = Depends(require_perm
         for row in db.scalars(select(ChatMessage).where(ChatMessage.session_id == session_id, access_service.tenant_clause(ChatMessage, user)).order_by(ChatMessage.id)).all()
     ]
     return {"session_id": session_id, "messages": messages}
-
-

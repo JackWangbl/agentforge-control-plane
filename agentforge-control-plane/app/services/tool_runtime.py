@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.models import Agent, McpServer, Skill
 from app.services.browser_runtime import browser_tool_specs, execute_browser_tool
+from app.services.execution_context import ExecutionContext, current_execution_context
 from app.services.mcp_stream import call_streamable_http_tool, is_http_stream_transport
 from app.services.sandbox_runtime import run_sandbox_tool, sandbox_tool_specs, selected_sandbox
 
@@ -201,7 +202,11 @@ def selected_skills(agent: Agent, db: Session) -> list[Skill]:
     ids = normalize_id_list(getattr(agent, "skill_ids", None))
     if not ids:
         return []
-    rows = db.scalars(select(Skill).where(Skill.id.in_(ids), Skill.enabled.is_(True)).order_by(Skill.id)).all()
+    rows = db.scalars(select(Skill).where(
+        Skill.id.in_(ids),
+        Skill.tenant_id == agent.tenant_id,
+        Skill.enabled.is_(True),
+    ).order_by(Skill.id)).all()
     return list(rows)
 
 
@@ -209,7 +214,11 @@ def selected_mcps(agent: Agent, db: Session) -> list[McpServer]:
     ids = normalize_id_list(getattr(agent, "mcp_ids", None))
     if not ids:
         return []
-    rows = db.scalars(select(McpServer).where(McpServer.id.in_(ids), McpServer.enabled.is_(True)).order_by(McpServer.id)).all()
+    rows = db.scalars(select(McpServer).where(
+        McpServer.id.in_(ids),
+        McpServer.tenant_id == agent.tenant_id,
+        McpServer.enabled.is_(True),
+    ).order_by(McpServer.id)).all()
     return list(rows)
 
 
@@ -258,46 +267,78 @@ def build_system_prompt(agent: Agent, db: Session) -> str:
 
 
 def execute_tool(name: str, arguments: dict[str, Any], db: Optional[Session] = None, agent: Optional[Agent] = None) -> str:
+    context = current_execution_context()
+    if agent is not None and (
+        context is None
+        or context.agent_id != int(agent.id or 0)
+        or context.tenant_id != int(agent.tenant_id or 0)
+    ):
+        context = ExecutionContext.for_agent(agent)
+    tenant_id = context.tenant_id if context is not None else getattr(agent, "tenant_id", None)
     if name == "get_current_time":
         return _current_time()
     if name == "calculate":
         return _calculate(str(arguments.get("expression") or ""))
     if name == "search_knowledge":
-        return _search_knowledge(str(arguments.get("query") or ""), db)
+        return _search_knowledge(str(arguments.get("query") or ""), db, tenant_id)
     if name == "list_agents":
-        return _list_agents(db)
+        return _list_agents(db, tenant_id)
     if name.startswith("browser_"):
         try:
-            return execute_browser_tool(name, arguments)
+            if context is None and agent is not None:
+                return json.dumps({"error": "缺少可信执行上下文"}, ensure_ascii=False)
+            return execute_browser_tool(name, arguments, context.scope_key if context else "standalone")
         except Exception as exc:
             return json.dumps({"error": str(exc)}, ensure_ascii=False)
     if name.startswith("sandbox_") and db is not None:
         box = selected_sandbox(agent, db) if agent is not None else None
-        if box is None and agent is None:
-            from sqlalchemy import select as sql_select
-            from app.models import SandboxPolicy
-            box = db.scalar(sql_select(SandboxPolicy).where(SandboxPolicy.enabled.is_(True)).order_by(SandboxPolicy.id))
         if box is None:
             return json.dumps({"error": "当前 Agent 未绑定可用沙箱"}, ensure_ascii=False)
-        return run_sandbox_tool(box, name, arguments)
+        return run_sandbox_tool(
+            box,
+            name,
+            arguments,
+            tenant_id=int(tenant_id or 0),
+            execution_id=context.scope_key if context else "standalone",
+        )
     if db is not None:
-        remote = _remote_mcp_for_tool(db, name)
+        remote = _remote_mcp_for_tool(db, name, agent)
         if remote is not None:
             try:
-                return call_streamable_http_tool(remote, name, arguments)
+                scoped_arguments = _scope_remote_arguments(remote, name, arguments, agent)
+                return call_streamable_http_tool(remote, name, scoped_arguments)
             except Exception as exc:
                 return json.dumps({"error": str(exc)}, ensure_ascii=False)
     return json.dumps({"error": f"未知工具 {name}"}, ensure_ascii=False)
 
 
-def _remote_mcp_for_tool(db: Session, name: str) -> Optional[McpServer]:
-    rows = db.scalars(select(McpServer).where(McpServer.enabled.is_(True)).order_by(McpServer.id)).all()
+def _remote_mcp_for_tool(db: Session, name: str, agent: Optional[Agent]) -> Optional[McpServer]:
+    if agent is None:
+        return None
+    rows = selected_mcps(agent, db)
     for row in rows:
         if is_builtin_mcp(row) or not is_http_stream_transport(row.transport):
             continue
         if any(tool.get("name") == name for tool in tool_specs_for_mcp(row)):
             return row
     return None
+
+
+def _scope_remote_arguments(
+    row: McpServer,
+    name: str,
+    arguments: dict[str, Any],
+    agent: Agent,
+) -> dict[str, Any]:
+    scoped = dict(arguments or {})
+    spec = next((item for item in tool_specs_for_mcp(row) if item.get("name") == name), {})
+    properties = (spec.get("parameters") or {}).get("properties") or {}
+    for key in ("tenant_id", "tenantId"):
+        if key in properties:
+            scoped[key] = int(agent.tenant_id)
+        else:
+            scoped.pop(key, None)
+    return scoped
 
 
 def parse_tool_arguments(raw: Any) -> dict[str, Any]:
@@ -353,13 +394,18 @@ def _calculate(expression: str) -> str:
         return f"无法计算「{expr}」：{exc}"
 
 
-def _search_knowledge(query: str, db: Optional[Session]) -> str:
+def _search_knowledge(query: str, db: Optional[Session], tenant_id: Optional[int] = None) -> str:
     q = (query or "").strip()
     if not q:
         return "请提供检索关键词。"
     hits = []
+    if db is not None and tenant_id is None:
+        return "缺少可信租户上下文，拒绝检索。"
     if db is not None:
-        for row in db.scalars(select(Skill).where(Skill.enabled.is_(True))).all():
+        stmt = select(Skill).where(Skill.enabled.is_(True))
+        if tenant_id is not None:
+            stmt = stmt.where(Skill.tenant_id == tenant_id)
+        for row in db.scalars(stmt).all():
             blob = f"{row.name}\n{row.description}\n{skill_instruction(row)}"
             if q.lower() in blob.lower():
                 hits.append(f"- {row.name}：{(row.description or skill_instruction(row)[:80])}")
@@ -368,10 +414,15 @@ def _search_knowledge(query: str, db: Optional[Session]) -> str:
     return "检索结果：\n" + "\n".join(hits[:6])
 
 
-def _list_agents(db: Optional[Session]) -> str:
+def _list_agents(db: Optional[Session], tenant_id: Optional[int] = None) -> str:
     if db is None:
         return "当前没有可用的 Agent 列表。"
-    rows = db.scalars(select(Agent).order_by(Agent.id)).all()
+    if tenant_id is None:
+        return "缺少可信租户上下文，拒绝列出 Agent。"
+    stmt = select(Agent)
+    if tenant_id is not None:
+        stmt = stmt.where(Agent.tenant_id == tenant_id)
+    rows = db.scalars(stmt.order_by(Agent.id)).all()
     if not rows:
         return "控制面里还没有 Agent。"
     lines = [f"- {row.name}（{row.model_name}）：{row.description or '未填写职责'}" for row in rows]

@@ -127,7 +127,7 @@ class SandboxPolicy(Base, TimestampMixin, TenantOwnedMixin):
     __tablename__ = "sandbox_policies"
     id: Mapped[int] = mapped_column(primary_key=True)
     name: Mapped[str] = mapped_column(String(100), unique=True)
-    runtime: Mapped[str] = mapped_column(String(60), default="python:3.11")
+    runtime: Mapped[str] = mapped_column(String(60), default="docker:python:3.11-slim")
     cpu_limit: Mapped[str] = mapped_column(String(20), default="1 vCPU")
     memory_limit: Mapped[str] = mapped_column(String(20), default="1 GiB")
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=60)
@@ -188,6 +188,7 @@ class EvaluationRun(Base, TimestampMixin, TenantOwnedMixin):
     skipped: Mapped[int] = mapped_column(Integer, default=0)
     avg_latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    metrics: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     error_message: Mapped[str] = mapped_column(Text, default="")
     started_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
     finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime, default=None)
@@ -283,4 +284,3 @@ class ExperimentEvent(Base, TimestampMixin, TenantOwnedMixin):
     status: Mapped[str] = mapped_column(String(24), default="ok")
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     tokens: Mapped[int] = mapped_column(Integer, default=0)
-

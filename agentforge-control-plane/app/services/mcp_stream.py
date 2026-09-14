@@ -12,6 +12,7 @@ from app.models import McpServer
 PROTOCOL_VERSIONS = ("2025-03-26", "2024-11-05")
 HTTP_STREAM_ALIASES = {"streamable_http", "http", "http_stream", "stream"}
 ALLOWED_TRANSPORTS = {"stdio", "sse", "streamable_http"}
+MASKED_SECRET = "****"
 
 
 def normalize_mcp_transport(value: Optional[str]) -> str:
@@ -58,11 +59,41 @@ def merge_mcp_config(existing: Optional[dict[str, Any]], incoming: Optional[dict
     extra = dict(incoming or {})
     headers = dict(base.get("headers") or {})
     if isinstance(extra.get("headers"), dict):
-        headers.update({str(k): str(v) for k, v in extra.pop("headers").items() if v is not None})
+        headers.update({
+            str(k): str(v)
+            for k, v in extra.pop("headers").items()
+            if v is not None and str(v) != MASKED_SECRET
+        })
     if headers:
         base["headers"] = headers
-    base.update(extra)
+    for key, value in extra.items():
+        if _is_secret_key(str(key)) and value == MASKED_SECRET:
+            continue
+        base[key] = value
     return base
+
+
+def public_mcp_config(config: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """Return MCP configuration without exposing credentials to the browser."""
+
+    return _mask_mapping(dict(config or {}))
+
+
+def _mask_mapping(value: dict[str, Any]) -> dict[str, Any]:
+    masked: dict[str, Any] = {}
+    for key, item in value.items():
+        if _is_secret_key(str(key)) and item:
+            masked[key] = MASKED_SECRET
+        elif isinstance(item, dict):
+            masked[key] = _mask_mapping(item)
+        else:
+            masked[key] = item
+    return masked
+
+
+def _is_secret_key(key: str) -> bool:
+    normalized = key.lower().replace("-", "_")
+    return any(token in normalized for token in ("authorization token", "authorization", "api_key", "apikey", "password", "secret", "token"))
 
 
 def _rpc(method: str, params: Optional[dict[str, Any]] = None, req_id: int = 1) -> dict[str, Any]:

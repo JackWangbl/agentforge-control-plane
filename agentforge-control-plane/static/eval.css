@@ -32,9 +32,25 @@
 .eval-form .wide{grid-column:1/-1}
 .eval-preview{max-height:180px;overflow:auto;border:1px solid var(--line);border-radius:8px;margin-top:8px}
 .eval-metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px}
+.eval-metrics-6{grid-template-columns:repeat(3,1fr)}
 .eval-metric{border:1px solid var(--line);border-radius:10px;padding:12px;background:#fafbfc}
-.eval-metric b{display:block;font-size:22px;letter-spacing:-.4px}
+.eval-metric b{display:block;font-size:22px;letter-spacing:-.4px;word-break:break-word}
 .eval-metric span{color:#8a94a3;font-size:11px}
+.eval-plan{background:#fdeeee;border:1px solid #f3c7c7;color:#8a3a3a;border-radius:10px;padding:10px 12px;margin:0 0 12px;font-size:13px;line-height:1.55}
+.eval-guide{border:1px solid var(--line);border-radius:10px;padding:12px;margin:0 0 14px;background:#f7f9fc}
+.eval-guide b{display:block;margin-bottom:6px}
+.eval-guide p{margin:0 0 8px;color:#3d4a5c;font-size:13px;line-height:1.55}
+.eval-guide-ex{font-size:12px;line-height:1.55;margin:0 0 6px;color:#3d4a5c}
+.eval-guide-ex span{display:inline-block;font-size:11px;font-weight:700;padding:1px 6px;border-radius:999px;margin-right:6px}
+.eval-guide-ex.ok span{background:#eaf8f1;color:#168a59}
+.eval-guide-ex.bad span{background:#fdeeee;color:#c43d3d}
+.eval-solution{max-width:280px;white-space:pre-wrap;color:#5b6778;font-size:12px;line-height:1.5}
+.eval-hist{border:1px solid var(--line);border-radius:10px;padding:12px;margin:0 0 14px;background:#fff}
+.eval-hist b{display:block;margin-bottom:8px}
+.eval-bar{display:grid;grid-template-columns:90px 1fr 36px;gap:8px;align-items:center;margin:6px 0;font-size:12px;color:#5b6778}
+.eval-bar i{display:block;height:8px;background:#2367e8;border-radius:99px;min-width:4px}
+.eval-add.redteam{grid-template-columns:1fr 1fr auto}
+.eval-add .wide{grid-column:1/-1}
 .eval-actual{max-width:360px;white-space:pre-wrap;color:#3d4a5c}
 .eval-add{display:grid;grid-template-columns:1fr 1fr auto;gap:10px;align-items:end;margin-top:16px;padding-top:14px;border-top:1px solid var(--line)}
 .eval-add label{display:block;font-size:12px;color:#5b6778;margin-bottom:6px}
@@ -55,6 +71,6 @@
 .eval-io pre{margin:0;white-space:pre-wrap;word-break:break-word;background:#fff;border:1px solid var(--line);border-radius:8px;padding:10px;max-height:240px;overflow:auto;font:12px/1.55 inherit}
 .eval-trace-list{margin-top:8px}
 @media (max-width:900px){
-  .eval-grid,.eval-form,.eval-metrics,.eval-add,.eval-agent-bar,.eval-facts,.eval-io{grid-template-columns:1fr;flex-direction:column;align-items:stretch}
+  .eval-grid,.eval-form,.eval-metrics,.eval-metrics-6,.eval-add,.eval-agent-bar,.eval-facts,.eval-io{grid-template-columns:1fr;flex-direction:column;align-items:stretch}
   .eval-agent-pick .select{width:100%;min-width:0}
 }

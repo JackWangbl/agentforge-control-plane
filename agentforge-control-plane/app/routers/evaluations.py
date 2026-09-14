@@ -16,11 +16,12 @@ from app.access.kinds import ResourceKind
 from app.access.scope import stamp_owner
 from app.access.service import access_service
 from app.database import ROOT, SessionLocal, get_db
-from app.models import Agent, Dataset, DatasetCase, EvaluationResult, EvaluationRun, Trace
-from app.schemas import DatasetCaseCreate, DatasetCreate, DatasetUpdate, EvaluationLaunch
+from app.models import Agent, Dataset, DatasetCase, EvaluationResult, EvaluationRun, ModelConfig, Trace
+from app.schemas import DatasetCaseCreate, DatasetCreate, DatasetUpdate, EvaluationLaunch, PerformanceLaunch
 from app.services.dataset_import import ImportErrorDetail, parse_dataset_bytes
-from app.services.eval_runner import ONLINE_CASE_LIMIT, dump_run, execute_run, resolve_cases
-from app.services.eval_scorer import SCORERS
+from app.services.eval_catalog import resolve_judge_model
+from app.services.eval_runner import ONLINE_CASE_LIMIT, PERF_INLINE_LIMIT, dump_run, execute_perf_run, execute_run, resolve_cases
+from app.services.eval_scorer import SCORERS, scoring_guide
 
 router = APIRouter()
 DATASET_FILES = ROOT / "workspaces" / "_datasets"
@@ -127,10 +128,21 @@ def _dump_case(row: DatasetCase) -> dict[str, Any]:
     }
 
 
+def _judge_name(db: Session, run: EvaluationRun) -> str:
+    if not run.judge_model_id:
+        return "评测裁判 · Qwen-Max" if run.scorer == "llm" else ""
+    row = db.get(ModelConfig, run.judge_model_id)
+    return (row.name if row else "") or ""
+
+
+def _dump_run(db: Session, run: EvaluationRun) -> dict[str, Any]:
+    return dump_run(run, judge_name=_judge_name(db, run))
+
+
 def _load_run(run_id: int) -> dict[str, Any]:
     with SessionLocal() as db:
         run = db.get(EvaluationRun, run_id)
-        data = dump_run(run)
+        data = _dump_run(db, run)
         results = list(
             db.scalars(select(EvaluationResult).where(EvaluationResult.run_id == run_id).order_by(EvaluationResult.id.asc())).all()
         )
@@ -342,12 +354,16 @@ def list_cases(dataset_id: int, q: str = "", user: CurrentUser = Depends(require
 @router.post("/api/datasets/{dataset_id}/cases", status_code=201)
 def add_case(dataset_id: int, payload: DatasetCaseCreate, user: CurrentUser = Depends(require_permission("eval:run")), db: Session = Depends(get_db)) -> dict[str, Any]:
     dataset = access_service.resolve_for_edit(user, ResourceKind.DATASET, dataset_id, db)
+    extra = dict(payload.extra or {})
+    if payload.solution.strip():
+        extra["solution"] = payload.solution.strip()
     row = DatasetCase(
         dataset_id=dataset_id,
         case_key=payload.case_key or "",
         input=payload.input,
         expected=payload.expected or "",
         tags=payload.tags or [],
+        extra=extra,
         tenant_id=user.tenant_id,
         owner_id=user.id,
     )
@@ -398,6 +414,13 @@ def _prepare_run(payload: EvaluationLaunch, mode: str, db: Session, user: Curren
         raise HTTPException(400, "没有可测试的用例")
     if mode == "online" and len(cases) > ONLINE_CASE_LIMIT:
         raise HTTPException(400, f"在线测试最多 {ONLINE_CASE_LIMIT} 条，请改走离线或减少勾选")
+    if scorer == "llm":
+        judge = resolve_judge_model(db, payload.judge_model_id)
+        if not judge:
+            raise HTTPException(400, "LLM 判分需要裁判模型。请在模型配置中启用「评测裁判 · Qwen-Max」并填写密钥。")
+        judge_id = judge.id
+    else:
+        judge_id = payload.judge_model_id
     name = payload.name.strip() or f"{agent.name} · {dataset.name} · {datetime.utcnow().strftime('%m-%d %H:%M')}"
     run = EvaluationRun(
         name=name,
@@ -405,7 +428,7 @@ def _prepare_run(payload: EvaluationLaunch, mode: str, db: Session, user: Curren
         agent_name=agent.name,
         dataset_id=dataset.id,
         agent_id=agent.id,
-        judge_model_id=payload.judge_model_id,
+        judge_model_id=judge_id,
         mode=mode,
         scorer=scorer,
         status="queued",
@@ -423,13 +446,13 @@ def _prepare_run(payload: EvaluationLaunch, mode: str, db: Session, user: Curren
 
 @router.get("/api/evaluations")
 def list_evaluations(user: CurrentUser = Depends(require_permission("eval:read")), db: Session = Depends(get_db)) -> list[dict[str, Any]]:
-    return [dump_run(row) for row in access_service.list_rows(user, ResourceKind.EVALUATION, db)]
+    return [_dump_run(db, row) for row in access_service.list_rows(user, ResourceKind.EVALUATION, db)]
 
 
 @router.post("/api/evaluations", status_code=201)
 def create_evaluation(payload: EvaluationLaunch, user: CurrentUser = Depends(require_permission("eval:run")), db: Session = Depends(get_db)) -> dict[str, Any]:
     run = _prepare_run(payload, "offline", db, user)
-    return dump_run(run)
+    return _dump_run(db, run)
 
 
 @router.post("/api/evaluations/online")
@@ -437,6 +460,47 @@ def run_online(payload: EvaluationLaunch, user: CurrentUser = Depends(require_pe
     run = _prepare_run(payload, "online", db, user)
     execute_run(run.id)
     return _load_run(run.id)
+
+
+@router.get("/api/evaluations/scoring-guide")
+def get_scoring_guide(user: CurrentUser = Depends(require_permission("eval:read"))) -> dict[str, Any]:
+    return scoring_guide()
+
+
+@router.post("/api/evaluations/performance")
+def run_performance(payload: PerformanceLaunch, user: CurrentUser = Depends(require_permission("eval:run")), db: Session = Depends(get_db)) -> dict[str, Any]:
+    agent = access_service.get_row(user, ResourceKind.AGENT, payload.agent_id, db)
+    dataset = access_service.get_row(user, ResourceKind.DATASET, payload.dataset_id, db)
+    if not _dataset_visible_to_agent(dataset, agent.id):
+        names = [item.name for item in _agent_index(user, db).values() if item.id in _agent_ids_of(dataset)]
+        raise HTTPException(400, f"该数据集已绑定到 {('、'.join(names) or '指定 Agent')}，不能用「{agent.name}」压测")
+    cases = resolve_cases(db, dataset.id, [])
+    if not cases:
+        raise HTTPException(400, "没有可压测的用例")
+    name = payload.name.strip() or f"{agent.name} · 性能测试 · {datetime.utcnow().strftime('%m-%d %H:%M')}"
+    run = EvaluationRun(
+        name=name,
+        dataset=dataset.name,
+        agent_name=agent.name,
+        dataset_id=dataset.id,
+        agent_id=agent.id,
+        mode="performance",
+        scorer="perf",
+        status="queued",
+        case_ids=[item.id for item in cases],
+        cases=payload.requests,
+        total=payload.requests,
+        metrics={"concurrency": payload.concurrency, "requests": payload.requests},
+        tenant_id=user.tenant_id,
+        owner_id=user.id,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    if payload.requests <= PERF_INLINE_LIMIT:
+        execute_perf_run(run.id)
+        return _load_run(run.id)
+    return _dump_run(db, run)
 
 
 @router.get("/api/evaluations/{run_id}")
@@ -480,7 +544,7 @@ def resume_evaluation(run_id: int, user: CurrentUser = Depends(require_permissio
     if run.mode == "online":
         execute_run(run.id)
         return _load_run(run_id)
-    return dump_run(run)
+    return _dump_run(db, run)
 
 
 @router.post("/api/evaluations/{run_id}/run")
@@ -495,10 +559,11 @@ def rerun_evaluation(run_id: int, user: CurrentUser = Depends(require_permission
     run.started_at = None
     run.finished_at = None
     db.commit()
-    if run.mode == "online":
+    requests = int((run.metrics or {}).get("requests") or run.total or 0)
+    if run.mode == "online" or (run.mode == "performance" and requests <= PERF_INLINE_LIMIT):
         execute_run(run.id)
         return _load_run(run_id)
-    return dump_run(run)
+    return _dump_run(db, run)
 
 
 @router.post("/api/evaluations/{run_id}/cancel")
@@ -509,7 +574,7 @@ def cancel_evaluation(run_id: int, user: CurrentUser = Depends(require_permissio
     run.status = "cancelled"
     run.finished_at = datetime.utcnow()
     db.commit()
-    return dump_run(run)
+    return _dump_run(db, run)
 
 
 @router.get("/api/evaluations/{run_id}/export.csv")

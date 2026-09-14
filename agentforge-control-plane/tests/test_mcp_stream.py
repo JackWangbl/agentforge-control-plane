@@ -4,7 +4,7 @@ from uuid import uuid4
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.services.mcp_stream import normalize_mcp_transport, transport_label
+from app.services.mcp_stream import merge_mcp_config, normalize_mcp_transport, transport_label
 
 
 def test_normalize_http_aliases_to_streamable_http():
@@ -64,6 +64,7 @@ def test_create_http_stream_mcp_and_probe_tools():
         body = created.json()
         assert body["transport"] == "streamable_http"
         assert body["transport_label"] == "HTTP Stream"
+        assert body["config"]["headers"]["Authorization"] == "****"
         probed = client.post(f"/api/mcp/{body['id']}/test")
         assert probed.status_code == 200, probed.text
         result = probed.json()
@@ -76,3 +77,15 @@ def test_create_http_stream_mcp_and_probe_tools():
         assert "initialize" in calls
         assert "tools/list" in calls
         client.delete(f"/api/mcp/{body['id']}")
+
+
+def test_masked_mcp_credentials_are_not_written_back():
+    existing = {
+        "token": "real-token",
+        "headers": {"Authorization": "Bearer real-token"},
+    }
+    merged = merge_mcp_config(existing, {
+        "token": "****",
+        "headers": {"Authorization": "****"},
+    })
+    assert merged == existing

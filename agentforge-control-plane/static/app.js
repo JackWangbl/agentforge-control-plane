@@ -225,10 +225,49 @@ async function resources(page){
 }
 const EVAL_AGENT_KEY='af_eval_agent';
 const evalState={tab:'datasets',datasetId:'',runId:'',poll:null,kindFilter:'',agentFilter:''};
-const scorerLabel={contains:'包含匹配',exact:'完全匹配',regex:'正则',llm:'LLM 判分'};
+const scorerLabel={contains:'包含匹配',exact:'完全匹配',regex:'正则',llm:'LLM 判分',perf:'性能指标'};
 const datasetKindLabel={redteam:'安全红队集',baseline:'能力基线',golden:'黄金集'};
 const datasetKindOrder=['redteam','baseline','golden'];
 const datasetContentNames={redteam:'提示注入',baseline:'日常问答',golden:'黄金用例'};
+function isPerfRun(x){return x&&x.mode==='performance'}
+function evalQualityRuns(){return evalAgentRuns().filter(x=>!isPerfRun(x))}
+function evalPerfRuns(){return evalAgentRuns().filter(isPerfRun)}
+function caseSolution(c){return String((c&&c.extra&&c.extra.solution)||'')}
+function caseAttack(c){return String((c&&c.extra&&c.extra.attack)||((c.tags||[])[0])||'')}
+function evalGuideOf(id){return ((evalState.guide&&evalState.guide.guides)||[]).find(x=>x.id===id)}
+function evalRecommendedJudge(agent){
+  const models=(evalState.catalog.models||[]).filter(x=>x.enabled!==false);
+  const named=models.find(x=>/评测裁判/.test(x.name||''));
+  if(named) return named;
+  const qwen=models.find(x=>String(x.model_id||'').toLowerCase().includes('qwen-max'));
+  if(qwen && (!agent || qwen.name!==agent.model_name)) return qwen;
+  return models.find(x=>!agent || x.name!==agent.model_name)||models[0]||null;
+}
+function evalJudgeSelectHtml(agent){
+  const models=evalState.catalog.models||[];
+  const rec=evalRecommendedJudge(agent);
+  const options=models.map(x=>{
+    const recMark=rec&&Number(x.id)===Number(rec.id)?' selected':'';
+    const hint=/评测裁判/.test(x.name||'')||String(x.model_id||'').toLowerCase().includes('qwen-max')?'（推荐）':'';
+    return `<option value="${x.id}"${recMark}>${escapeHtml(x.name)}${hint}</option>`;
+  }).join('');
+  return `<div class="field wide" id="evalJudgeField" hidden>
+    <label>裁判模型</label>
+    <select class="select" style="width:100%" name="judge_model_id" id="evalJudgeSelect">
+      ${options}
+      <option value="">不推荐：使用 Agent 自己的模型</option>
+    </select>
+    <p class="bind-hint">默认使用 Qwen-Max（配置名「评测裁判 · Qwen-Max」，温度 0）。不要选和被测 Agent 同一个模型，否则会自己给自己打分。</p>
+  </div>`;
+}
+function evalScorerHintHtml(id){
+  const g=evalGuideOf(id);
+  if(!g) return '';
+  return `<div class="eval-guide"><b>${escapeHtml(g.label)}怎么判</b><p>${escapeHtml(g.rule)}</p>
+    <div class="eval-guide-ex ok"><span>通过例</span>期望「${escapeHtml(g.pass_expected)}」· 实际「${escapeHtml(g.pass_actual)}」→ ${escapeHtml(g.pass_why)}</div>
+    <div class="eval-guide-ex bad"><span>失败例</span>期望「${escapeHtml(g.fail_expected)}」· 实际「${escapeHtml(g.fail_actual)}」→ ${escapeHtml(g.fail_why)}</div>
+    <p class="muted">适用：${escapeHtml(g.use_when||'')}</p></div>`;
+}
 function datasetKindOf(row){return datasetKindLabel[row&&row.kind]?row.kind:'baseline'}
 function datasetKindBadge(row){const kind=datasetKindOf(row);return `<span class="eval-kind ${kind}">${datasetKindLabel[kind]}</span>`}
 function datasetDisplayName(row){
@@ -285,15 +324,17 @@ function evalAgentRuns(){
   return rows.filter(row=>String(row.agent_id)===String(agent.id) || (!row.agent_id && row.agent_name===agent.name));
 }
 async function evaluations(){
-  const [datasets,runs,agents,models]=await Promise.all([
-    api('/api/datasets'),api('/api/evaluations'),api('/api/agents'),api('/api/models')
+  const [datasets,runs,agents,models,guide]=await Promise.all([
+    api('/api/datasets'),api('/api/evaluations'),api('/api/agents'),api('/api/models'),
+    api('/api/evaluations/scoring-guide').catch(()=>({guides:[]}))
   ]);
   evalState.catalog={datasets,runs,agents,models};
+  evalState.guide=guide;
   evalEnsureAgent();
   return `${head('evaluations', `<div class="page-actions" id="evalPageActions">${evalActionButtons()}</div>`)}<div id="evalChrome">${evalChromeHtml()}</div>`;
 }
 function evalActionButtons(){
-  const extra=evalCurrentAgent()?`<button class="btn ghost" onclick="evalCreateDataset()">＋ 数据集</button><button class="btn primary" onclick="evalOpenLaunch()">＋ 创建测试</button>`:'';
+  const extra=evalCurrentAgent()?`<button class="btn ghost" onclick="evalCreateDataset()">＋ 数据集</button><button class="btn primary" onclick="evalOpenLaunch()">＋ 创建测试</button><button class="btn ghost" onclick="evalOpenLaunchPerf()">＋ 性能测试</button>`:'';
   return `${extra}<button type="button" class="btn ghost" onclick="refreshPage()">刷新</button>`;
 }
 function evalEmptyAgentHtml(){
@@ -305,7 +346,7 @@ function evalChromeHtml(){
   const agent=evalCurrentAgent();
   const agentBar=`<div class="eval-agent-bar${agents.length?'':' eval-agent-bar-empty'}"><div class="eval-agent-pick"><span>评测对象</span><select class="select" id="evalAgentFilter" ${agents.length?'':'disabled'}><option value="">${agents.length?'请选择 Agent':'暂无 Agent'}</option>${agents.map(x=>`<option value="${x.id}" ${agent&&Number(x.id)===Number(agent.id)?'selected':''}>${escapeHtml(x.name)}</option>`).join('')}</select></div><div class="eval-agent-meta">${agent?escapeHtml(agent.model_name||'')+' · '+(agent.version||''):(agents.length?'选定后显示模型与版本':'')}</div></div>`;
   if(!agent) return `${agentBar}<div id="evalBody">${evalEmptyAgentHtml()}</div>`;
-  const tabs=[['datasets','数据集'],['runs','测试任务'],['report','报告'],['trace','追踪']].map(([id,label])=>`<button type="button" class="eval-tab ${evalState.tab===id?'active':''}" data-eval-tab="${id}">${label}</button>`).join('');
+  const tabs=[['datasets','数据集'],['runs','测试任务'],['perf','性能测试'],['report','报告'],['trace','追踪']].map(([id,label])=>`<button type="button" class="eval-tab ${evalState.tab===id?'active':''}" data-eval-tab="${id}">${label}</button>`).join('');
   return `${agentBar}<div class="eval-tabs">${tabs}</div><div id="evalBody">${evalBodyHtml()}</div>`;
 }
 function evalBodyHtml(){
@@ -313,6 +354,7 @@ function evalBodyHtml(){
   if(evalState.tab==='datasets') return evalDatasetsHtml();
   if(evalState.tab==='report') return evalReportHtml();
   if(evalState.tab==='trace') return evalTraceHtml();
+  if(evalState.tab==='perf') return evalPerfHtml();
   return evalRunsHtml();
 }
 function evalDatasetsHtml(){
@@ -336,9 +378,21 @@ function evalDatasetsHtml(){
 function evalRunsHtml(){
   const agent=evalCurrentAgent();
   if(!agent) return evalEmptyAgentHtml();
-  const rows=evalAgentRuns();
+  const rows=evalQualityRuns();
   const body=rows.length?rows.map(x=>`<tr><td><b>${escapeHtml(x.name)}</b><br><small>${x.mode==='online'?'在线抽检':'离线回归'} · ${scorerLabel[x.scorer]||x.scorer}</small></td><td>${escapeHtml(x.dataset||'')}</td><td>${pill(x.status)}</td><td>${x.passed||0}/${x.total||x.cases||0}</td><td><b style="color:${x.score>=80?'#16a56a':'#e49b18'}">${x.status==='completed'?(x.score+'%'):'—'}</b></td><td><button class="btn ghost" onclick="evalOpenReport(${x.id})">报告</button> <button class="btn ghost" onclick="evalOpenTrace(${x.id})">追踪</button> <button class="btn ghost" onclick="evalRerun(${x.id})">重跑</button>${(x.failed||0)>0&&x.status!=='running'&&x.status!=='queued'?` <button class="btn ghost" onclick="evalResume(${x.id})">续跑失败</button>`:''}${x.status==='running'||x.status==='queued'?` <button class="btn ghost" onclick="evalCancel(${x.id})">取消</button>`:''}</td></tr>`).join(''):`<tr><td class="session-empty" colspan="6">「${escapeHtml(agent.name)}」还没有测试任务。选一份数据集后点右上角创建测试。</td></tr>`;
   return `<section class="panel"><table class="data-table"><thead><tr><th>测试任务</th><th>数据集</th><th>状态</th><th>进度</th><th>通过率</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></section>`;
+}
+function evalPerfHtml(){
+  const agent=evalCurrentAgent();
+  if(!agent) return evalEmptyAgentHtml();
+  const rows=evalPerfRuns();
+  const body=rows.length?rows.map(x=>{
+    const m=x.metrics||{};
+    const qps=m.qps!=null?m.qps:'—';
+    const p95=m.latency_p95_ms!=null?m.latency_p95_ms+' ms':'—';
+    return `<tr><td><b>${escapeHtml(x.name)}</b><br><small>并发 ${m.concurrency||'—'} · 请求 ${x.total||m.requests||0}</small></td><td>${escapeHtml(x.dataset||'')}</td><td>${pill(x.status)}</td><td>${qps}</td><td>${p95}</td><td><b style="color:${x.score>=90?'#16a56a':'#e49b18'}">${x.status==='completed'?(x.score+'%'):'—'}</b></td><td><button class="btn ghost" onclick="evalOpenReport(${x.id})">报告</button> <button class="btn ghost" onclick="evalRerun(${x.id})">重跑</button>${x.status==='running'||x.status==='queued'?` <button class="btn ghost" onclick="evalCancel(${x.id})">取消</button>`:''}</td></tr>`;
+  }).join(''):`<tr><td class="session-empty" colspan="7">还没有性能测试。点右上角「性能测试」，用当前数据集压测延迟和 QPS。</td></tr>`;
+  return `<section class="panel"><table class="data-table"><thead><tr><th>压测任务</th><th>数据集</th><th>状态</th><th>QPS</th><th>P95</th><th>成功率</th><th>操作</th></tr></thead><tbody>${body}</tbody></table></section>`;
 }
 function evalReportHtml(){
   return `<section class="panel" id="evalReportMain"><div class="empty">${evalState.runId?'正在载入报告…':'从当前 Agent 的测试任务里点「报告」。'}</div></section>`;
@@ -379,7 +433,7 @@ function evalHydrate(){
   if(!evalCurrentAgent()) return;
   if(evalState.tab==='datasets'&&evalState.datasetId) evalLoadDataset(evalState.datasetId);
   if((evalState.tab==='report'||evalState.tab==='trace') && !evalState.runId){
-    const latest=evalAgentRuns()[0];
+    const latest=(evalState.tab==='report'?evalAgentRuns():evalQualityRuns())[0];
     if(latest) evalState.runId=String(latest.id);
   }
   if(evalState.tab==='report'&&evalState.runId) evalLoadReport(evalState.runId);
@@ -481,9 +535,17 @@ async function evalLoadDataset(id){
     const hit=(evalState.catalog.datasets||[]).find(x=>Number(x.id)===Number(id));
     if(hit) Object.assign(hit,{name:ds.name,description:ds.description,kind:ds.kind,kind_label:ds.kind_label,agent_ids:ds.agent_ids||[],agent_names:ds.agent_names||[],case_count:ds.case_count,source_name:ds.source_name});
     const cases=ds.cases||[];
+    const red=datasetKindOf(ds)==='redteam';
+    const rows=cases.length?cases.map(c=>red
+      ?`<tr><td class="mono">${escapeHtml(c.case_key||c.id)}</td><td>${escapeHtml(caseAttack(c)||'—')}</td><td>${escapeHtml(c.input)}</td><td>${escapeHtml(c.expected||'—')}</td><td class="eval-solution">${escapeHtml(caseSolution(c)||'—')}</td><td><button class="btn ghost" onclick="evalDeleteCase(${ds.id},${c.id})">删除</button></td></tr>`
+      :`<tr><td class="mono">${escapeHtml(c.case_key||c.id)}</td><td>${escapeHtml(c.input)}</td><td>${escapeHtml(c.expected||'—')}</td><td><button class="btn ghost" onclick="evalDeleteCase(${ds.id},${c.id})">删除</button></td></tr>`
+    ).join(''):`<tr><td colspan="${red?6:4}" class="session-empty">还没有用例。在下方填写后点「保存用例」，或导入 CSV/JSONL。</td></tr>`;
+    const head=red?'<tr><th>编号</th><th>攻击类型</th><th>输入</th><th>期望</th><th>解决方案</th><th></th></tr>':'<tr><th>编号</th><th>输入</th><th>期望</th><th></th></tr>';
+    const plan=red?`<div class="eval-plan">红队集用来挖「不该做却做了」的洞。下面 5 类攻击各有对应加固办法：失败时按解决方案改提示词、工具描述或鉴权，再回归。</div>`:'';
     main.innerHTML=`<div class="eval-toolbar"><div><b>${escapeHtml(datasetDisplayName(ds))} ${datasetKindBadge(ds)}</b><div class="muted">${ds.case_count||0} 条用例 · ${escapeHtml(ds.source_name||'手动添加')}</div></div><input type="file" id="evalFile" accept=".csv,.json,.jsonl,text/csv,application/json" hidden><button class="btn ghost" onclick="evalEditDataset()">编辑</button><button class="btn ghost" onclick="$('#evalFile').click()">导入</button><a class="btn ghost" href="/api/datasets/template.csv">模板</a><button class="btn ghost danger" onclick="evalDeleteDataset(${ds.id})">删除</button></div>
-    <table class="data-table"><thead><tr><th>编号</th><th>输入</th><th>期望</th><th></th></tr></thead><tbody>${cases.length?cases.map(c=>`<tr><td class="mono">${escapeHtml(c.case_key||c.id)}</td><td>${escapeHtml(c.input)}</td><td>${escapeHtml(c.expected||'—')}</td><td><button class="btn ghost" onclick="evalDeleteCase(${ds.id},${c.id})">删除</button></td></tr>`).join(''):'<tr><td colspan="4" class="session-empty">还没有用例。在下方填写后点「保存用例」，或导入 CSV/JSONL。</td></tr>'}</tbody></table>
-    <form class="eval-add" id="evalAddForm"><div><label>用户输入 / 问题</label><textarea name="input" required placeholder="发给 Agent 的问题"></textarea></div><div><label>期望答案（可留空）</label><textarea name="expected" placeholder="用于包含/完全/正则匹配"></textarea></div><button class="btn primary" type="submit">保存用例</button></form>`;
+    ${plan}
+    <table class="data-table"><thead>${head}</thead><tbody>${rows}</tbody></table>
+    <form class="eval-add ${red?'redteam':''}" id="evalAddForm"><div><label>用户输入 / 问题</label><textarea name="input" required placeholder="发给 Agent 的问题"></textarea></div><div><label>期望答案（可留空）</label><textarea name="expected" placeholder="用于包含/完全/正则匹配"></textarea></div>${red?`<div class="wide"><label>解决方案</label><textarea name="solution" placeholder="这条如果失败，应该怎么改提示词或工具"></textarea></div>`:''}<button class="btn primary" type="submit">保存用例</button></form>`;
     const file=$('#evalFile');
     if(file) file.onchange=()=>evalImportFile(ds.id,file);
     const add=$('#evalAddForm');
@@ -492,7 +554,7 @@ async function evalLoadDataset(id){
       const data=Object.fromEntries(new FormData(add));
       if(!String(data.input||'').trim()){toast('请填写用户输入');return}
       try{
-        await api(`/api/datasets/${ds.id}/cases`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input:String(data.input).trim(),expected:data.expected||''})});
+        await api(`/api/datasets/${ds.id}/cases`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({input:String(data.input).trim(),expected:data.expected||'',solution:data.solution||''})});
         toast('用例已保存');
         evalState.datasetId=String(ds.id);
         await evalReloadThen('datasets');
@@ -578,7 +640,6 @@ async function evalImportFile(datasetId,input){
 }
 function evalOpenLaunch(){
   const agent=evalRequireAgent();
-  const models=evalState.catalog.models||[];
   if(!agent) return;
   const usable=evalAgentDatasets().filter(x=>(x.case_count||0)>0);
   if(!usable.length){toast('当前 Agent 还没有带用例的数据集');return}
@@ -588,11 +649,16 @@ function evalOpenLaunch(){
     <div class="field"><label>数据集</label><select class="select" style="width:100%" name="dataset_id">${usable.map(x=>`<option value="${x.id}" ${Number(x.id)===Number(preferred.id)?'selected':''}>${escapeHtml(datasetDisplayName(x))} · ${datasetKindLabel[datasetKindOf(x)]} · ${x.case_count||0} 条</option>`).join('')}</select></div>
     <div class="field"><label>测试方式</label><select class="select" style="width:100%" name="mode"><option value="online">在线抽检（同步，最多 10 条）</option><option value="offline">离线回归（后台跑完全集）</option></select></div>
     <div class="field"><label>打分方式</label><select class="select" style="width:100%" name="scorer" id="evalScorer"><option value="contains">包含匹配</option><option value="exact">完全匹配</option><option value="regex">正则</option><option value="llm">LLM 判分</option></select></div>
-    <div class="field wide" id="evalJudgeField" hidden><label>裁判模型</label><select class="select" style="width:100%" name="judge_model_id"><option value="">使用 Agent 自己的模型</option>${models.map(x=>`<option value="${x.id}">${escapeHtml(x.name)}</option>`).join('')}</select></div>
+    <div class="field wide" id="evalScorerHint">${evalScorerHintHtml('contains')}</div>
+    ${evalJudgeSelectHtml(agent)}
     <div class="field wide"><label>任务名称</label><input name="name" placeholder="可留空，自动生成"></div>
   </div>`,'evaluations',true);
   const scorer=$('#evalScorer');
-  if(scorer) scorer.onchange=()=>{$('#evalJudgeField').hidden=scorer.value!=='llm'};
+  if(scorer) scorer.onchange=()=>{
+    $('#evalJudgeField').hidden=scorer.value!=='llm';
+    const hint=$('#evalScorerHint');
+    if(hint) hint.innerHTML=evalScorerHintHtml(scorer.value);
+  };
   const btn=resetModalSubmit('开始测试');
   if(!btn) return;
   btn.type='button';
@@ -703,7 +769,13 @@ async function evalLoadReport(id){
     const idx=(evalState.catalog.runs||[]).findIndex(x=>x.id===id);
     if(idx>=0) evalState.catalog.runs[idx]=run;
     const running=run.status==='running'||run.status==='queued';
-    main.innerHTML=`<div class="eval-toolbar"><div><b>${escapeHtml(run.name)}</b><div class="muted">${escapeHtml(run.agent_name)} · ${escapeHtml(run.dataset)} · ${scorerLabel[run.scorer]||run.scorer} · ${pill(run.status)}</div></div><button class="btn ghost" onclick="evalOpenTrace(${run.id})">追踪</button><a class="btn ghost" href="/api/evaluations/${run.id}/export.csv">导出 CSV</a><button class="btn ghost" onclick="evalRerun(${run.id})">按同样配置重跑</button>${(run.failed||0)>0&&!running?`<button class="btn ghost" onclick="evalResume(${run.id})">从失败续跑</button>`:''}</div>
+    if(isPerfRun(run)){
+      main.innerHTML=evalPerfReportHtml(run,rows,running);
+      if(running) evalStartPoll(id); else evalStopPoll();
+      return;
+    }
+    main.innerHTML=`<div class="eval-toolbar"><div><b>${escapeHtml(run.name)}</b><div class="muted">${escapeHtml(run.agent_name)} · ${escapeHtml(run.dataset)} · ${scorerLabel[run.scorer]||run.scorer}${run.scorer==='llm'?` · 裁判 ${escapeHtml(run.judge_model_name||'评测裁判 · Qwen-Max')}`:''} · ${pill(run.status)}</div></div><button class="btn ghost" onclick="evalOpenTrace(${run.id})">追踪</button><a class="btn ghost" href="/api/evaluations/${run.id}/export.csv">导出 CSV</a><button class="btn ghost" onclick="evalRerun(${run.id})">按同样配置重跑</button>${(run.failed||0)>0&&!running?`<button class="btn ghost" onclick="evalResume(${run.id})">从失败续跑</button>`:''}</div>
+    ${evalScorerHintHtml(run.scorer)}
     <div class="eval-metrics">
       <div class="eval-metric"><span>通过率</span><b>${run.status==='completed'||run.judged?run.score+'%':'—'}</b></div>
       <div class="eval-metric"><span>通过 / 失败 / 跳过</span><b>${run.passed||0} / ${run.failed||0} / ${run.skipped||0}</b></div>
@@ -714,6 +786,75 @@ async function evalLoadReport(id){
     <table class="data-table"><thead><tr><th>状态</th><th>输入</th><th>期望</th><th>实际输出</th><th>说明</th></tr></thead><tbody>${rows.length?rows.map(x=>`<tr><td>${pill(x.status)}</td><td>${escapeHtml(x.input)}</td><td>${escapeHtml(x.expected||'—')}</td><td class="eval-actual">${escapeHtml(x.actual||'')}</td><td>${escapeHtml(x.reason||x.error||'')}${x.trace_id?`<br><small class="mono">${escapeHtml(x.trace_id)}</small>`:''}</td></tr>`).join(''):`<tr><td colspan="5" class="session-empty">${running?'正在执行…':'暂无结果'}</td></tr>`}</tbody></table>`;
     if(running) evalStartPoll(id); else evalStopPoll();
   }catch(e){main.innerHTML='<div class="empty">报告加载失败</div>'}
+}
+function evalPerfReportHtml(run,rows,running){
+  const m=run.metrics||{};
+  const bars=(m.histogram||[]).map(item=>`<div class="eval-bar"><span>${escapeHtml(item.label)}</span><i style="width:${Math.max(4,item.percent||0)}%"></i><b>${item.count||0}</b></div>`).join('')||'<p class="muted">暂无延迟分布</p>';
+  return `<div class="eval-toolbar"><div><b>${escapeHtml(run.name)}</b><div class="muted">${escapeHtml(run.agent_name)} · ${escapeHtml(run.dataset)} · 并发 ${m.concurrency||'—'} · 请求 ${m.requests||run.total||0} · ${pill(run.status)}</div></div><a class="btn ghost" href="/api/evaluations/${run.id}/export.csv">导出 CSV</a><button class="btn ghost" onclick="evalRerun(${run.id})">重跑压测</button></div>
+    <div class="eval-metrics eval-metrics-6">
+      <div class="eval-metric"><span>QPS</span><b>${m.qps!=null?m.qps:'—'}</b></div>
+      <div class="eval-metric"><span>P50 / P95 / P99</span><b>${m.latency_p50_ms||0} / ${m.latency_p95_ms||0} / ${m.latency_p99_ms||0}</b></div>
+      <div class="eval-metric"><span>平均 / 最大</span><b>${m.latency_avg_ms||run.avg_latency_ms||0} / ${m.latency_max_ms||0} ms</b></div>
+      <div class="eval-metric"><span>成功率</span><b>${run.status==='completed'?run.score+'%':'—'}</b></div>
+      <div class="eval-metric"><span>总耗时</span><b>${m.duration_ms||0} ms</b></div>
+      <div class="eval-metric"><span>Token / 秒</span><b>${m.tokens_per_sec||0}</b></div>
+    </div>
+    <div class="eval-hist"><b>延迟分布</b>${bars}</div>
+    ${run.error_message?`<p class="muted">${escapeHtml(run.error_message)}</p>`:''}
+    <table class="data-table"><thead><tr><th>状态</th><th>输入</th><th>耗时</th><th>Token</th><th>说明</th></tr></thead><tbody>${rows.length?rows.map(x=>`<tr><td>${pill(x.status)}</td><td>${escapeHtml(x.input)}</td><td>${x.latency_ms||0} ms</td><td>${x.tokens||0}</td><td>${escapeHtml(x.reason||x.error||'')}</td></tr>`).join(''):`<tr><td colspan="5" class="session-empty">${running?'正在压测…':'暂无结果'}</td></tr>`}</tbody></table>`;
+}
+function evalOpenLaunchPerf(){
+  const agent=evalRequireAgent();
+  if(!agent) return;
+  const usable=evalAgentDatasets().filter(x=>(x.case_count||0)>0);
+  if(!usable.length){toast('当前 Agent 还没有带用例的数据集');return}
+  const preferred=usable.find(x=>String(x.id)===String(evalState.datasetId))||usable[0];
+  evalOpenModal('性能测试','开始压测',`<div class="eval-form">
+    <div class="field"><label>Agent</label><input value="${escapeHtml(agent.name)}" readonly><input type="hidden" name="agent_id" value="${agent.id}"></div>
+    <div class="field"><label>数据集</label><select class="select" style="width:100%" name="dataset_id">${usable.map(x=>`<option value="${x.id}" ${Number(x.id)===Number(preferred.id)?'selected':''}>${escapeHtml(datasetDisplayName(x))} · ${x.case_count||0} 条</option>`).join('')}</select></div>
+    <div class="field"><label>并发数</label><input type="number" name="concurrency" min="1" max="8" value="3"></div>
+    <div class="field"><label>总请求数</label><input type="number" name="requests" min="1" max="80" value="12"></div>
+    <div class="field wide"><label>任务名称</label><input name="name" placeholder="可留空，自动生成"></div>
+    <p class="bind-hint wide">用数据集里的问题循环发请求，统计 QPS、P50/P95/P99 和成功率。不按答案打分。16 条以内同步跑完，更多进入后台队列。</p>
+  </div>`,'eval-perf',true);
+  const btn=resetModalSubmit('开始压测');
+  if(!btn) return;
+  btn.type='button';
+  btn.onclick=async ev=>{
+    ev.preventDefault();
+    if(btn.dataset.busy==='1') return;
+    btn.dataset.busy='1';
+    btn.disabled=true;
+    btn.textContent='正在压测…';
+    try{
+      await evalLaunchPerfFromForm($('#modalForm'));
+    }catch(err){
+      toast(apiError(err)||'性能测试失败');
+    }finally{
+      if(btn.isConnected && $('#modal')&&$('#modal').open){
+        btn.dataset.busy='';
+        btn.disabled=false;
+        btn.textContent='开始压测';
+      }
+    }
+  };
+}
+async function evalLaunchPerfFromForm(form){
+  const data=Object.fromEntries(new FormData(form));
+  const agentId=Number(data.agent_id);
+  const datasetId=Number(data.dataset_id);
+  if(!agentId||!datasetId){toast('请选择 Agent 和数据集');return}
+  const row=await api('/api/evaluations/performance',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({
+    agent_id:agentId,
+    dataset_id:datasetId,
+    concurrency:Number(data.concurrency||3),
+    requests:Number(data.requests||12),
+    name:data.name||''
+  })});
+  $('#modal').close();
+  toast(row.status==='completed'?'性能测试完成':'性能测试已进入队列');
+  evalState.runId=row.id;
+  await evalReloadThen('report');
 }
 function evalStartPoll(id){
   evalStopPoll();
@@ -727,7 +868,7 @@ function evalStartPoll(id){
 function evalStopPoll(){if(evalState.poll){clearInterval(evalState.poll);evalState.poll=null}}
 async function evalRerun(id){
   const row=await api(`/api/evaluations/${id}/run`,{method:'POST'});
-  toast(row.mode==='online'?'已重新跑完':'已重新入队');
+  toast(row.mode==='online'||row.mode==='performance'&&row.status==='completed'?'已重新跑完':'已重新入队');
   evalState.runId=id;
   await evalReloadThen('report', ()=>evalLoadReport(id));
 }
@@ -973,7 +1114,7 @@ async function playground(selectedAgent=''){
     const mark=live?'进行中':(statusText[x.status]||x.status);
     return `<option value="${x.id}" ${String(x.id)===String(chatState.experimentId)?'selected':''}>${escapeHtml(x.name)}（${mark}）</option>`;
   }).join('');
-  return `${head('playground', pageTools('<button class="btn ghost" type="button" id="resumeChat" hidden>从失败处继续</button><button class="btn ghost" type="button" id="clearChat">新开会话</button>'))}
+  return `<div class="pg-page">${head('playground', pageTools('<button class="btn ghost" type="button" id="resumeChat" hidden>从失败处继续</button><button class="btn ghost" type="button" id="clearChat">新开会话</button>'))}
 <div class="pg-controls">
   <label class="pg-field">智能体<select id="runAgent" class="select">${agents.map(x=>`<option value="${x.id}" ${String(x.id)===String(agent&&agent.id)?'selected':''}>${x.name}</option>`).join('')||'<option value="">暂无智能体</option>'}</select></label>
   <label class="pg-field">模型<select id="runModel" class="select">${models.map(x=>`<option value="${x.id}" ${String(x.id)===String(model&&model.id)?'selected':''}>${x.name}</option>`).join('')||'<option value="">暂无可用模型</option>'}</select></label>
@@ -1004,6 +1145,7 @@ async function playground(selectedAgent=''){
       <div id="traceList" class="trace-timeline"></div>
     </aside>
   </div>
+</div>
 </div>`
 }
 const WF_KINDS = {
@@ -1278,8 +1420,9 @@ function sandboxFormHtml(row){
   return `<div class="field"><label>策略名称</label><input name="name" placeholder="受限 Python 沙箱" value="${row?escapeHtml(row.name):''}" required></div>
     <div class="field"><label>运行时</label>
       <select class="select" style="width:100%" name="runtime">
-        <option value="python:3.11" ${!row||row.runtime==='python:3.11'?'selected':''}>本地隔离 · python:3.11</option>
-        <option value="python:3.12" ${row&&row.runtime==='python:3.12'?'selected':''}>本地隔离 · python:3.12</option>
+        <option value="docker:python:3.11-slim" ${!row||row.runtime==='docker:python:3.11-slim'?'selected':''}>Docker 强隔离 · Python 3.11</option>
+        <option value="docker:python:3.12-slim" ${row&&row.runtime==='docker:python:3.12-slim'?'selected':''}>Docker 强隔离 · Python 3.12</option>
+        <option value="python:3.11" ${row&&row.runtime==='python:3.11'?'selected':''}>本地执行（仅开发，不安全）</option>
         <option value="agentscope/runtime-sandbox-base" ${row&&String(row.runtime||'').includes('runtime-sandbox')?'selected':''}>AgentScope Runtime（Docker）</option>
       </select>
     </div>
@@ -1536,6 +1679,10 @@ $('#modalForm').addEventListener('submit',async e=>{
   }
   if(page==='eval-case'){
     try{await evalSubmitCase(form)}catch(err){toast(apiError(err)||'保存用例失败')}
+    return;
+  }
+  if(page==='eval-perf'){
+    try{await evalLaunchPerfFromForm(form)}catch(err){toast(apiError(err)||'性能测试失败')}
     return;
   }
   if(page==='evaluations'){

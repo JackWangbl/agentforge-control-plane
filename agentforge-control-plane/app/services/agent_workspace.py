@@ -30,10 +30,12 @@ def slugify(name: str) -> str:
 
 
 def workspace_relpath(agent: Agent) -> str:
-    stored = (getattr(agent, "workspace", "") or "").strip()
-    if stored:
-        return stored.replace("\\", "/").strip("/")
-    return f"workspaces/{agent.id}-{slugify(agent.name)}"
+    tenant_id = int(getattr(agent, "tenant_id", 0) or 0)
+    stored = (getattr(agent, "workspace", "") or "").replace("\\", "/").strip("/")
+    expected_prefix = f"workspaces/tenants/{tenant_id}/agents/"
+    if stored.startswith(expected_prefix) and Path(stored).name.startswith(f"{agent.id}-"):
+        return stored
+    return f"workspaces/tenants/{tenant_id}/agents/{agent.id}-{slugify(agent.name)}"
 
 
 def workspace_dir(agent: Agent) -> Path:
@@ -45,6 +47,13 @@ def workspace_dir(agent: Agent) -> Path:
 
 def ensure_workspace(agent: Agent) -> Path:
     path = workspace_dir(agent)
+    stored = (getattr(agent, "workspace", "") or "").replace("\\", "/").strip("/")
+    if stored and stored != workspace_relpath(agent) and not path.exists():
+        root = workspaces_root().resolve()
+        legacy = (root / Path(stored).name).resolve()
+        if legacy.exists() and legacy.is_dir() and root in legacy.parents:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(legacy), str(path))
     (path / "sessions").mkdir(parents=True, exist_ok=True)
     (path / "traces").mkdir(parents=True, exist_ok=True)
     (path / "files").mkdir(parents=True, exist_ok=True)
@@ -70,6 +79,7 @@ def write_manifest(agent: Agent) -> None:
     path.mkdir(parents=True, exist_ok=True)
     payload = {
         "id": agent.id,
+        "tenant_id": int(getattr(agent, "tenant_id", 0) or 0),
         "name": agent.name,
         "description": agent.description or "",
         "model_name": agent.model_name or "",
@@ -131,6 +141,7 @@ def save_checkpoint(agent: Agent, session_id: str, payload: dict[str, Any]) -> d
     now = _iso(datetime.now(timezone.utc))
     data = load_session(agent, session_id) or {
         "session_id": session_id,
+        "tenant_id": int(getattr(agent, "tenant_id", 0) or 0),
         "agent_id": agent.id,
         "agent_name": agent.name,
         "messages": [],
@@ -191,6 +202,7 @@ def persist_run(
     now = _iso(datetime.now(timezone.utc))
     data = load_session(agent, session_id) or {
         "session_id": session_id,
+        "tenant_id": int(getattr(agent, "tenant_id", 0) or 0),
         "agent_id": agent.id,
         "agent_name": agent.name,
         "title": title[:80],

@@ -154,6 +154,7 @@ def ensure_schema() -> None:
             "skipped": ("INTEGER NULL", "INTEGER DEFAULT 0"),
             "avg_latency_ms": ("INTEGER NULL", "INTEGER DEFAULT 0"),
             "total_tokens": ("INTEGER NULL", "INTEGER DEFAULT 0"),
+            "metrics": ("JSON NULL", "TEXT DEFAULT '{}'"),
             "error_message": ("TEXT NULL", "TEXT DEFAULT ''"),
             "started_at": ("DATETIME NULL", "DATETIME"),
             "finished_at": ("DATETIME NULL", "DATETIME"),
@@ -177,6 +178,17 @@ def ensure_schema() -> None:
             "WHERE base_url LIKE '%api.deepseek.com%' "
             "AND model_id IN ('deepseek-v4', 'deepseek-v3', 'deepseek-chat')"
         ))
+        if "sandbox_policies" in inspector.get_table_names():
+            conn.execute(text(
+                "UPDATE sandbox_policies "
+                "SET runtime = 'docker:python:3.11-slim' "
+                "WHERE runtime = 'python:3.11'"
+            ))
+            conn.execute(text(
+                "UPDATE sandbox_policies "
+                "SET runtime = 'docker:python:3.12-slim' "
+                "WHERE runtime = 'python:3.12'"
+            ))
     _ensure_tenant_columns()
 
 

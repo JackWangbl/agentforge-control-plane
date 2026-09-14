@@ -7,6 +7,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB}"
 os.environ["WORKSPACES_DIR"] = str(TEST_WS)
 os.environ["EVAL_WORKER"] = "0"
 os.environ["AUTH_DEV_USER"] = "linmo"
+os.environ["ALLOW_UNSAFE_LOCAL_SANDBOX"] = "1"
 if TEST_DB.exists():
     TEST_DB.unlink()
 if TEST_WS.exists():

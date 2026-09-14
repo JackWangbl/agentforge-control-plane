@@ -21,8 +21,31 @@ def test_rule_scorers():
     assert score_case("contains", "三个工作日", "预计三个工作日内到账")["status"] == "passed"
     assert score_case("contains", "三个工作日", "明天就到")["status"] == "failed"
     assert score_case("exact", "OK", "ok")["status"] == "passed"
-    assert score_case("regex", r"hello", "say Hello there")["status"] == "passed"
+    assert score_case("exact", "OK", "OK，已处理完成")["status"] == "failed"
+    assert score_case("regex", r"配送中|运输中|已发货", "订单 AC9001 正在配送中")["status"] == "passed"
+    assert score_case("regex", r"配送中|运输中|已发货", "已为您申请退款。")["status"] == "failed"
     assert score_case("contains", "", "任意输出")["status"] == "skipped"
+
+
+def test_scoring_guide_and_redteam_catalog():
+    with TestClient(app) as client:
+        guide = client.get("/api/evaluations/scoring-guide")
+        assert guide.status_code == 200, guide.text
+        body = guide.json()
+        assert set(body["scorers"]) == {"contains", "exact", "regex", "llm"}
+        labels = {item["id"]: item for item in body["guides"]}
+        assert labels["llm"]["recommended_model_id"] == "qwen-max"
+        assert "Qwen-Max" in labels["llm"]["rule"]
+        datasets = client.get("/api/datasets", params={"kind": "redteam"}).json()
+        red = next((row for row in datasets if row["name"] == "提示注入"), None)
+        assert red, datasets
+        assert red["case_count"] >= 5
+        detail = client.get(f"/api/datasets/{red['id']}").json()
+        keys = {item["case_key"] for item in detail["cases"]}
+        assert {"rt_inject", "rt_refund", "rt_privacy", "rt_takedown", "rt_jailbreak"} <= keys
+        refund = next(item for item in detail["cases"] if item["case_key"] == "rt_refund")
+        assert "确认" in refund["expected"]
+        assert "create_refund" in (refund["extra"] or {}).get("solution", "")
 
 
 def test_add_case_persists():
@@ -158,4 +181,32 @@ def test_dataset_kind_and_agent_binding():
             "scorer": "contains",
         })
         assert allowed.status_code == 201, allowed.text
+        client.delete(f"/api/datasets/{dataset_id}")
+
+
+def test_performance_eval():
+    with TestClient(app) as client:
+        created = client.post("/api/datasets", json={"name": "压测集-单测"})
+        assert created.status_code == 201, created.text
+        dataset_id = created.json()["id"]
+        agents = client.get("/api/agents").json()
+        client.post(f"/api/datasets/{dataset_id}/cases", json={"input": "你好", "expected": "你好"})
+        client.put(f"/api/datasets/{dataset_id}", json={"agent_ids": [agents[0]["id"]]})
+        perf = client.post("/api/evaluations/performance", json={
+            "agent_id": agents[0]["id"],
+            "dataset_id": dataset_id,
+            "concurrency": 2,
+            "requests": 4,
+            "name": "性能测试单测",
+        })
+        assert perf.status_code == 200, perf.text
+        body = perf.json()
+        assert body["mode"] == "performance"
+        assert body["status"] == "completed"
+        assert body["total"] == 4
+        assert body["metrics"]["concurrency"] == 2
+        assert body["metrics"]["requests"] == 4
+        assert "latency_p95_ms" in body["metrics"]
+        assert "qps" in body["metrics"]
+        assert len(body["results"]) == 4
         client.delete(f"/api/datasets/{dataset_id}")
