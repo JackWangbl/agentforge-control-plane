@@ -90,6 +90,11 @@ def ensure_schema() -> None:
                     conn.execute(text("ALTER TABLE agents ADD COLUMN workspace TEXT DEFAULT ''"))
             if "sandbox_id" not in agent_cols:
                 conn.execute(text("ALTER TABLE agents ADD COLUMN sandbox_id INTEGER NULL"))
+            if "opencli_ids" not in agent_cols:
+                if is_mysql():
+                    conn.execute(text("ALTER TABLE agents ADD COLUMN opencli_ids JSON NULL"))
+                else:
+                    conn.execute(text("ALTER TABLE agents ADD COLUMN opencli_ids TEXT DEFAULT '[]'"))
     if "conversations" in inspector.get_table_names():
         conversation_cols = {col["name"] for col in inspector.get_columns("conversations")}
         if "agent_id" not in conversation_cols:
@@ -195,7 +200,7 @@ def ensure_schema() -> None:
 def _ensure_tenant_columns() -> None:
     inspector = inspect(engine)
     tables = {
-        "agents", "mcp_servers", "skills", "model_configs", "workflows",
+        "agents", "mcp_servers", "opencli_endpoints", "skills", "model_configs", "workflows",
         "sandbox_policies", "roles", "datasets", "dataset_cases",
         "evaluation_runs", "evaluation_results", "experiments",
         "experiment_variants", "experiment_assignments", "experiment_events",

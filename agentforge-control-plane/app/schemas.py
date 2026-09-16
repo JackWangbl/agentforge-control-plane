@@ -9,8 +9,8 @@ class ORMModel(BaseModel):
 
 class McpCreate(BaseModel):
     name: str = Field(min_length=2, max_length=100)
-    transport: str = Field(pattern="^(stdio|sse|http|http_stream|streamable_http)$")
-    endpoint: str
+    transport: str = Field(pattern="^(stdio|sse|http|http_stream|streamable_http|opencli)$")
+    endpoint: str = ""
     enabled: bool = True
     config: dict[str, Any] = {}
 
@@ -58,7 +58,36 @@ class AgentCreate(BaseModel):
     system_prompt: str = ""
     skill_ids: list[int] = []
     mcp_ids: list[int] = []
+    opencli_ids: list[int] = []
     sandbox_id: Optional[int] = None
+
+
+class OpenCliCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=100)
+    kind: str = Field(default="cdp", pattern="^(cdp|daemon)$")
+    endpoint: str
+    target: str = ""
+    session: str = "agentforge"
+    token: str = ""
+    enabled: bool = True
+
+
+class OpenCliUpdate(BaseModel):
+    name: Optional[str] = Field(default=None, min_length=2, max_length=100)
+    kind: Optional[str] = Field(default=None, pattern="^(cdp|daemon)$")
+    endpoint: Optional[str] = None
+    target: Optional[str] = None
+    session: Optional[str] = None
+    token: Optional[str] = None
+    enabled: Optional[bool] = None
+
+
+class OpenCliQuery(BaseModel):
+    action: str = Field(default="query", pattern="^(tabs|query|eval|exec|run)$")
+    target: str = ""
+    selector: str = ""
+    expression: str = ""
+    command: str = ""
 
 
 class SandboxCreate(BaseModel):
@@ -79,7 +108,7 @@ class RoleCreate(BaseModel):
 
 class McpUpdate(BaseModel):
     name: Optional[str] = Field(default=None, min_length=2, max_length=100)
-    transport: Optional[str] = Field(default=None, pattern="^(stdio|sse|http|http_stream|streamable_http)$")
+    transport: Optional[str] = Field(default=None, pattern="^(stdio|sse|http|http_stream|streamable_http|opencli)$")
     endpoint: Optional[str] = None
     enabled: Optional[bool] = None
     config: Optional[dict[str, Any]] = None
@@ -122,6 +151,7 @@ class AgentUpdate(BaseModel):
     system_prompt: Optional[str] = None
     skill_ids: Optional[list[int]] = None
     mcp_ids: Optional[list[int]] = None
+    opencli_ids: Optional[list[int]] = None
     sandbox_id: Optional[int] = None
 
 

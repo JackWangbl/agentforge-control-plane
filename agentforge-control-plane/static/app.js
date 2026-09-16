@@ -141,7 +141,7 @@ async function openSessionDetail(sessionId){
   }catch(e){target.innerHTML='<div class="empty">会话详情加载失败。</div>'}
 }
 
-const resourceInfo={agents:{icon:'◇',name:'Agent',desc:x=>x.description,meta:x=>[x.model_name+' · '+(x.version||''), x.workspace?('空间 '+x.workspace):agentBindSummary(x)],action:'新建 Agent'},mcp:{icon:'⚙',name:'MCP 服务',desc:x=>x.endpoint,meta:x=>[mcpTransportLabel(x.transport),(x.runnable?'可调用 ':'')+(x.tools_count||0)+' 个工具'],action:'添加 MCP'},skills:{icon:'✦',name:'Skill',desc:x=>x.description,meta:x=>[x.version,x.has_instruction?'指令已就绪':'待填写指令'],action:'添加 Skill'},models:{icon:'◉',name:'模型',desc:x=>x.model_id,meta:x=>[x.provider,x.has_credential?'密钥已就绪':'待填写密钥'],action:'添加模型'},sandboxes:{icon:'▣',name:'沙箱策略',desc:x=>x.runtime+' · '+(x.backend||'local'),meta:x=>[x.cpu_limit+' / '+x.memory_limit,(x.network_mode==='deny'?'断网隔离':x.network_mode)+' · '+(x.timeout_seconds||60)+'s'],action:'新建策略'},roles:{icon:'♙',name:'角色',desc:x=>x.description,meta:x=>[x.user_count+' 位用户',(x.permissions||[]).length+' 项权限'],action:'新建角色'}};
+const resourceInfo={agents:{icon:'◇',name:'Agent',desc:x=>x.description,meta:x=>[x.model_name+' · '+(x.version||''), x.workspace?('空间 '+x.workspace):agentBindSummary(x)],action:'新建 Agent'},mcp:{icon:'⚙',name:'MCP 服务',desc:x=>x.command||x.endpoint,meta:x=>[mcpTransportLabel(x.transport),(x.command?x.command:(x.target?('过滤 '+x.target+' · '):'')+(x.runnable?'可调用 ':'')+(x.tools_count||0)+' 个工具')],action:'添加 MCP'},skills:{icon:'✦',name:'Skill',desc:x=>x.description,meta:x=>[x.version,x.has_instruction?'指令已就绪':'待填写指令'],action:'添加 Skill'},models:{icon:'◉',name:'模型',desc:x=>x.model_id,meta:x=>[x.provider,x.has_credential?'密钥已就绪':'待填写密钥'],action:'添加模型'},sandboxes:{icon:'▣',name:'沙箱策略',desc:x=>x.runtime+' · '+(x.backend||'local'),meta:x=>[x.cpu_limit+' / '+x.memory_limit,(x.network_mode==='deny'?'断网隔离':x.network_mode)+' · '+(x.timeout_seconds||60)+'s'],action:'新建策略'},roles:{icon:'♙',name:'角色',desc:x=>x.description,meta:x=>[x.user_count+' 位用户',(x.permissions||[]).length+' 项权限'],action:'新建角色'}};
 const resourceStore = {};
 function resourceMenuItem(label,onclick,extra=''){return `<button type="button" class="card-menu-item${extra}" role="menuitem" onclick="${onclick}">${label}</button>`}
 function resourceActions(page,x){
@@ -156,7 +156,7 @@ function resourceActions(page,x){
     }
     return `<div class="card-menu"><button type="button" class="card-menu-btn" aria-label="更多操作" aria-haspopup="menu" aria-expanded="false" onclick="toggleCardMenu(event,this)">⋮</button><div class="card-menu-list" role="menu">${items.join('')}</div></div>`;
   }
-  const primary=page==='models'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用模型'"} onclick="testModel(${x.id})">连通测试</button>`:page==='mcp'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 MCP'"} onclick="testMcp(${x.id})">探测工具</button>`:page==='skills'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 Skill'"} onclick="testSkill(${x.id})">预览指令</button>`:page==='sandboxes'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用沙箱'"} onclick="testSandbox(${x.id})">试跑代码</button>`:'';
+  const primary=page==='models'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用模型'"} onclick="testModel(${x.id})">连通测试</button>`:page==='mcp'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 MCP'"} onclick="testMcp(${x.id})">${x.transport==='opencli'?'探测浏览器':'探测工具'}</button>`:page==='skills'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用 Skill'"} onclick="testSkill(${x.id})">预览指令</button>`:page==='sandboxes'?`<button type="button" class="btn primary resource-edit" ${x.enabled?'':"disabled title='请先启用沙箱'"} onclick="testSandbox(${x.id})">试跑代码</button>`:'';
   return `${primary}${writable?`<button type="button" class="btn ghost resource-edit" onclick="openEdit('${page}',${x.id})">编辑</button><button type="button" class="btn ghost resource-edit danger" onclick="removeResource('${page}',${x.id})">删除</button>`:'<span class="muted">只读</span>'}`
 }
 function toggleCardMenu(event,btn){
@@ -1406,6 +1406,7 @@ function mcpTransportLabel(value){
   const kind=String(value||'').toLowerCase().replace(/-/g,'_');
   if(kind==='streamable_http'||kind==='http'||kind==='http_stream') return 'HTTP Stream';
   if(kind==='sse') return 'SSE';
+  if(kind==='opencli') return 'OpenCLI';
   if(kind==='stdio') return 'StdIO';
   return String(value||'').toUpperCase();
 }
@@ -1413,6 +1414,7 @@ function mcpTransportValue(value){
   const kind=String(value||'').toLowerCase().replace(/-/g,'_');
   if(kind==='streamable_http'||kind==='http'||kind==='http_stream') return 'streamable_http';
   if(kind==='sse') return 'sse';
+  if(kind==='opencli') return 'opencli';
   return 'stdio';
 }
 function sandboxFormHtml(row){
@@ -1441,31 +1443,46 @@ function sandboxFormHtml(row){
 function mcpFormHtml(row){
   const transport=mcpTransportValue(row&&row.transport||'streamable_http');
   const endpoint=row?escapeHtml(row.endpoint||''):'';
-  const hasAuth=!!(row&&row.config&&((row.config.headers&&(row.config.headers.Authorization||row.config.headers.authorization))||row.config.api_key||row.config.token));
+  const cfg=row&&row.config||{};
+  const command=escapeHtml(row&&row.command||cfg.command||'');
+  const hasAuth=!!(cfg.headers&&(cfg.headers.Authorization||cfg.headers.authorization)||cfg.api_key||cfg.token);
   return `<div class="field"><label>服务名称</label><input name="name" placeholder="高德地图" value="${row?escapeHtml(row.name):''}" required></div>
     <div class="field"><label>传输协议</label>
       <select class="select" style="width:100%" name="transport" id="mcpTransport" required>
         <option value="streamable_http" ${transport==='streamable_http'?'selected':''}>HTTP Stream</option>
         <option value="sse" ${transport==='sse'?'selected':''}>SSE</option>
         <option value="stdio" ${transport==='stdio'?'selected':''}>StdIO</option>
+        <option value="opencli" ${transport==='opencli'?'selected':''}>OpenCLI · 远程浏览器</option>
       </select>
     </div>
-    <div class="field"><label id="mcpEndpointLabel">${transport==='stdio'?'启动命令':'服务地址'}</label>
-      <input name="endpoint" id="mcpEndpoint" placeholder="${transport==='stdio'?'builtin:local-tools':'https://mcp.example.com/mcp'}" value="${endpoint}" required>
+    <div class="field" id="mcpEndpointField" ${transport==='opencli'?'hidden':''}><label id="mcpEndpointLabel">${transport==='stdio'?'启动命令':'服务地址'}</label>
+      <input name="endpoint" id="mcpEndpoint" placeholder="${transport==='stdio'?'builtin:local-tools':'https://mcp.example.com/mcp'}" value="${endpoint}" ${transport==='opencli'?'':'required'}>
     </div>
-    <div class="field" id="mcpAuthField" ${transport==='stdio'?'hidden':''}><label>请求头 / Token（可选）</label>
+    <div id="mcpOpencliFields" ${transport==='opencli'?'':'hidden'}>
+      <div class="field"><label>OpenCLI 指令</label>
+        <textarea name="command" class="skill-md" placeholder="opencli --cdp http://10.0.0.8:9222 tab list" ${transport==='opencli'?'required':''}>${command}</textarea>
+        <small class="bind-hint">直接写一条指令即可，地址写在指令里。探测和 Agent 工具都会执行它；Agent 也可以再传别的 command。</small>
+      </div>
+    </div>
+    <div class="field" id="mcpAuthField" ${transport==='stdio'||transport==='opencli'?'hidden':''}><label>请求头 / Token（可选）</label>
       <input name="auth" type="password" placeholder="${hasAuth?'已保存密钥，留空则不修改':'Bearer sk-... 或 Authorization: Bearer sk-...'}" autocomplete="off">
-      <small class="bind-hint">HTTP Stream 走 MCP Streamable HTTP。保存后点「探测工具」会握手并拉工具列表。</small>
+      <small class="bind-hint" id="mcpAuthHint">HTTP Stream 走 MCP Streamable HTTP。保存后点「探测工具」会握手并拉工具列表。</small>
     </div>`;
 }
 function bindMcpForm(){
-  const sel=$('#mcpTransport'), input=$('#mcpEndpoint'), label=$('#mcpEndpointLabel'), auth=$('#mcpAuthField');
-  if(!sel||!input) return;
+  const sel=$('#mcpTransport'), input=$('#mcpEndpoint'), label=$('#mcpEndpointLabel'), auth=$('#mcpAuthField'), extra=$('#mcpOpencliFields'), endpointField=$('#mcpEndpointField'), command=$('#modalForm [name="command"]');
+  if(!sel) return;
   const apply=()=>{
-    const stream=sel.value!=='stdio';
-    if(label) label.textContent=stream?'服务地址':'启动命令';
-    input.placeholder=stream?'https://mcp.example.com/mcp':'builtin:local-tools';
-    if(auth) auth.hidden=!stream;
+    const kind=sel.value;
+    if(label) label.textContent=kind==='stdio'?'启动命令':'服务地址';
+    if(input){
+      input.placeholder=kind==='stdio'?'builtin:local-tools':'https://mcp.example.com/mcp';
+      input.required=kind!=='opencli';
+    }
+    if(endpointField) endpointField.hidden=kind==='opencli';
+    if(auth) auth.hidden=kind==='stdio'||kind==='opencli';
+    if(extra) extra.hidden=kind!=='opencli';
+    if(command) command.required=kind==='opencli';
   };
   sel.onchange=apply;
   apply();
@@ -1705,7 +1722,9 @@ $('#modalForm').addEventListener('submit',async e=>{
   if(page==='sandboxes'&&data.timeout_seconds!==undefined)data.timeout_seconds=Number(data.timeout_seconds);
   if(page==='mcp'){
     const auth=String(data.auth||'').trim();
-    delete data.auth;
+    const command=String(data.command||'').trim();
+    delete data.auth; delete data.kind; delete data.target; delete data.session; delete data.command;
+    const config={...(data.config||{})};
     if(auth){
       const headers={};
       if(auth.includes(':')&&!/^bearer\s+/i.test(auth)){
@@ -1714,8 +1733,13 @@ $('#modalForm').addEventListener('submit',async e=>{
       }else{
         headers.Authorization=/^bearer\s+/i.test(auth)?auth:'Bearer '+auth;
       }
-      data.config={headers};
+      config.headers=headers;
     }
+    if(data.transport==='opencli'){
+      config.command=command;
+      if(!data.endpoint) data.endpoint='';
+    }
+    if(Object.keys(config).length) data.config=config;
   }
   if(page==='roles'){
     data.permissions=[...form.querySelectorAll('input[name="permissions"]:checked')].map(x=>x.value);
@@ -1727,6 +1751,7 @@ $('#modalForm').addEventListener('submit',async e=>{
   }
   if(!id)Object.keys(data).forEach(key=>{if(data[key]==='')delete data[key]});
   if(data.api_key==='')delete data.api_key;
+  if(data.token==='')delete data.token;
   if(data.temperature!==undefined)data.temperature=Number(data.temperature);
   if(data.timeout_seconds!==undefined)data.timeout_seconds=Number(data.timeout_seconds);
   if(data.permissions!==undefined && !Array.isArray(data.permissions)) data.permissions=String(data.permissions).split(',').map(x=>x.trim()).filter(Boolean);
@@ -1795,7 +1820,43 @@ if(sessionModal){
   sessionModal.addEventListener('cancel', e=>{ e.preventDefault(); closeSessionDetail(); });
 }
 async function testModel(id){try{const r=await api(`/api/models/${id}/test`,{method:'POST'});toast(r.message)}catch(e){toast('模型配置检查失败')}}
-async function testMcp(id){try{const r=await api(`/api/mcp/${id}/test`,{method:'POST'});toast(r.message)}catch(e){toast('MCP 探测失败')}}
+async function testMcp(id){
+  try{
+    const r=await api(`/api/mcp/${id}/test`,{method:'POST'});
+    const row=resourceStore.mcp&&resourceStore.mcp[id];
+    if(row&&row.transport==='opencli') openOpencliProbe(id, r);
+    toast(r.message);
+  }catch(e){toast('MCP 探测失败')}
+}
+function openOpencliProbe(id, data){
+  const row=resourceStore.mcp&&resourceStore.mcp[id];
+  const name=(row&&row.name)||'OpenCLI';
+  $('#modalEyebrow').textContent='OPENCLI';
+  $('#modalTitle').textContent=name+' · 执行指令';
+  $('#modalSubmit').hidden=true;
+  $('#modal').classList.add('modal-wide');
+  const command=escapeHtml((row&&row.command)||data.command||'');
+  const sample=data.sample?`<pre class="skill-preview">${escapeHtml(data.sample)}</pre>`:'';
+  const tabs=Array.isArray(data.tab_list)?data.tab_list:(Array.isArray(data.tabs)?data.tabs:[]);
+  const list=tabs.length
+    ? `<table class="data-table"><thead><tr><th>标题</th><th>地址</th></tr></thead><tbody>${tabs.map(t=>`<tr><td>${escapeHtml(t.title||'(无标题)')}</td><td class="mono">${escapeHtml(t.url||t.id||'')}</td></tr>`).join('')}</tbody></table>`
+    : '';
+  $('#modalFields').innerHTML=`<p class="skill-preview-meta">${escapeHtml(data.message||'')}</p>${sample}${list}
+    <div class="field"><label>OpenCLI 指令</label><textarea id="opencliQueryCommand" class="skill-md" placeholder="tab list 或 eval document.title">${command}</textarea></div>
+    <button type="button" class="btn primary" id="opencliQueryBtn">执行指令</button>
+    <pre class="skill-preview" id="opencliQueryOut" hidden></pre>`;
+  $('#modalForm').dataset.page='preview';
+  $('#modalForm').dataset.id='';
+  $('#modal').showModal();
+  const btn=$('#opencliQueryBtn');
+  if(btn) btn.onclick=async()=>{
+    try{
+      const r=await api(`/api/mcp/${id}/query`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'exec',command:($('#opencliQueryCommand').value||'').trim()})});
+      const out=$('#opencliQueryOut');
+      if(out){out.hidden=false;out.textContent=r.output||r.text||r.error||JSON.stringify(r,null,2)}
+    }catch(err){toast(apiError(err)||'执行失败')}
+  };
+}
 function openSkillPreview(id, data){
   const row=resourceStore.skills&&resourceStore.skills[id];
   const name=(row&&row.name)||'Skill';

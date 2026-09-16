@@ -11,7 +11,7 @@ from app.models import McpServer
 
 PROTOCOL_VERSIONS = ("2025-03-26", "2024-11-05")
 HTTP_STREAM_ALIASES = {"streamable_http", "http", "http_stream", "stream"}
-ALLOWED_TRANSPORTS = {"stdio", "sse", "streamable_http"}
+ALLOWED_TRANSPORTS = {"stdio", "sse", "streamable_http", "opencli"}
 MASKED_SECRET = "****"
 
 
@@ -19,10 +19,8 @@ def normalize_mcp_transport(value: Optional[str]) -> str:
     raw = (value or "stdio").strip().lower().replace("-", "_")
     if raw in HTTP_STREAM_ALIASES:
         return "streamable_http"
-    if raw == "sse":
-        return "sse"
-    if raw == "stdio":
-        return "stdio"
+    if raw in {"sse", "stdio", "opencli"}:
+        return raw
     return raw
 
 
@@ -30,9 +28,13 @@ def is_http_stream_transport(value: Optional[str]) -> bool:
     return normalize_mcp_transport(value) == "streamable_http"
 
 
+def is_opencli_transport(value: Optional[str]) -> bool:
+    return normalize_mcp_transport(value) == "opencli"
+
+
 def transport_label(value: Optional[str]) -> str:
     kind = normalize_mcp_transport(value)
-    return {"streamable_http": "HTTP Stream", "sse": "SSE", "stdio": "StdIO"}.get(kind, (value or "").upper())
+    return {"streamable_http": "HTTP Stream", "sse": "SSE", "stdio": "StdIO", "opencli": "OpenCLI"}.get(kind, (value or "").upper())
 
 
 def agentscope_transport(value: Optional[str]) -> str:

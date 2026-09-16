@@ -3,9 +3,9 @@ __pycache__/
 *.py[cod]
 *.db
 .env
+.auth/
 .pytest_cache/
 .ruff_cache/
 workspaces/*/
 tests/workspaces-test/
 !workspaces/.gitkeep
-

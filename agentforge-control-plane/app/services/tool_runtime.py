@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 from app.models import Agent, McpServer, Skill
 from app.services.browser_runtime import browser_tool_specs, execute_browser_tool
 from app.services.execution_context import ExecutionContext, current_execution_context
-from app.services.mcp_stream import call_streamable_http_tool, is_http_stream_transport
+from app.services.mcp_stream import call_streamable_http_tool, is_http_stream_transport, is_opencli_transport
+from app.services.opencli_runtime import opencli_tool_specs, query_browser
 from app.services.sandbox_runtime import run_sandbox_tool, sandbox_tool_specs, selected_sandbox
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -98,6 +99,8 @@ def _as_openai_tool(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def tool_specs_for_mcp(row: McpServer) -> list[dict[str, Any]]:
+    if is_opencli_transport(row.transport):
+        return opencli_tool_specs()
     if is_builtin_mcp(row) and "browser" in (row.endpoint or "").lower():
         return browser_tool_specs()
     if is_builtin_mcp(row):
@@ -222,6 +225,23 @@ def selected_mcps(agent: Agent, db: Session) -> list[McpServer]:
     return list(rows)
 
 
+def selected_opencli_mcps(agent: Agent, db: Session) -> list[McpServer]:
+    return [row for row in selected_mcps(agent, db) if is_opencli_transport(row.transport)]
+
+
+def _resolve_opencli(agent: Agent, db: Session, name: str = "") -> Optional[McpServer]:
+    rows = selected_opencli_mcps(agent, db)
+    if not rows:
+        return None
+    wanted = (name or "").strip()
+    if not wanted:
+        return rows[0]
+    for row in rows:
+        if row.name == wanted:
+            return row
+    return None
+
+
 def skill_prompt_block(db: Session, agent: Optional[Agent] = None) -> str:
     rows = selected_skills(agent, db) if agent is not None else db.scalars(select(Skill).where(Skill.enabled.is_(True)).order_by(Skill.id)).all()
     chunks = []
@@ -247,7 +267,7 @@ def mcp_tool_hint(db: Session, agent: Optional[Agent] = None) -> str:
         names.extend(spec["name"] for spec in sandbox_tool_specs())
     if not names:
         return ""
-    return "你可以调用这些 MCP 工具：" + "、".join(names) + "。需要实时时间、计算、检索技能说明、查看 Agent 列表或在沙箱里跑代码时必须先调用工具，不要猜测。"
+    return "你可以调用这些 MCP 工具：" + "、".join(names) + "。需要实时时间、计算、检索技能说明、查看 Agent 列表、查询远程浏览器页面或在沙箱里跑代码时必须先调用工具，不要猜测。"
 
 
 def agent_allows_tool(agent: Agent, db: Session, tool_name: str) -> bool:
@@ -288,6 +308,28 @@ def execute_tool(name: str, arguments: dict[str, Any], db: Optional[Session] = N
             if context is None and agent is not None:
                 return json.dumps({"error": "缺少可信执行上下文"}, ensure_ascii=False)
             return execute_browser_tool(name, arguments, context.scope_key if context else "standalone")
+        except Exception as exc:
+            return json.dumps({"error": str(exc)}, ensure_ascii=False)
+    if (name == "opencli" or name.startswith("opencli_")) and db is not None:
+        if agent is None:
+            return json.dumps({"error": "缺少 Agent 上下文"}, ensure_ascii=False)
+        endpoint = _resolve_opencli(agent, db, str(arguments.get("opencli") or ""))
+        if endpoint is None:
+            return json.dumps({"error": "当前 Agent 未绑定可用的 OpenCLI MCP"}, ensure_ascii=False)
+        try:
+            if name == "opencli" or name == "opencli_exec":
+                result = query_browser(endpoint, action="exec", command=str(arguments.get("command") or ""))
+            else:
+                action = "tabs" if name == "opencli_tabs" else "eval" if name == "opencli_eval" else "query"
+                result = query_browser(
+                    endpoint,
+                    action=action,
+                    target=str(arguments.get("target") or ""),
+                    selector=str(arguments.get("selector") or ""),
+                    expression=str(arguments.get("expression") or ""),
+                    command=str(arguments.get("command") or ""),
+                )
+            return json.dumps(result, ensure_ascii=False)
         except Exception as exc:
             return json.dumps({"error": str(exc)}, ensure_ascii=False)
     if name.startswith("sandbox_") and db is not None:

@@ -7,7 +7,7 @@ from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import McpServer, SandboxPolicy, Skill
+from app.models import McpServer, OpenCliEndpoint, SandboxPolicy, Skill
 
 
 def validate_agent_bindings(
@@ -16,12 +16,14 @@ def validate_agent_bindings(
     *,
     skill_ids: Optional[list[int]] = None,
     mcp_ids: Optional[list[int]] = None,
+    opencli_ids: Optional[list[int]] = None,
     sandbox_id: Optional[int] = None,
 ) -> None:
     """Reject references that do not exist inside the trusted tenant boundary."""
 
     _validate_ids(db, Skill, tenant_id, skill_ids, "Skill")
     _validate_ids(db, McpServer, tenant_id, mcp_ids, "MCP")
+    _validate_ids(db, OpenCliEndpoint, tenant_id, opencli_ids, "OpenCLI")
     if sandbox_id is not None:
         found = db.scalar(select(SandboxPolicy.id).where(
             SandboxPolicy.id == sandbox_id,

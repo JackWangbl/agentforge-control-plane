@@ -7,6 +7,7 @@ class ResourceKind(str, Enum):
     AGENT = "agent"
     CREDENTIAL = "credential"
     MCP = "mcp"
+    OPENCLI = "opencli"
     SKILL = "skill"
     WORKFLOW = "workflow"
     SANDBOX = "sandbox"
@@ -28,6 +29,7 @@ RESOURCE_READ = {
     ResourceKind.AGENT: "agent:read",
     ResourceKind.CREDENTIAL: "model:read",
     ResourceKind.MCP: "mcp:read",
+    ResourceKind.OPENCLI: "opencli:read",
     ResourceKind.SKILL: "skill:read",
     ResourceKind.WORKFLOW: "workflow:read",
     ResourceKind.SANDBOX: "sandbox:read",
@@ -44,6 +46,7 @@ RESOURCE_WRITE = {
     ResourceKind.AGENT: "agent:write",
     ResourceKind.CREDENTIAL: "model:write",
     ResourceKind.MCP: "mcp:write",
+    ResourceKind.OPENCLI: "opencli:write",
     ResourceKind.SKILL: "skill:write",
     ResourceKind.WORKFLOW: "workflow:write",
     ResourceKind.SANDBOX: "sandbox:write",

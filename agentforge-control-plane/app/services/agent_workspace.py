@@ -87,6 +87,7 @@ def write_manifest(agent: Agent) -> None:
         "system_prompt": agent.system_prompt or "",
         "skill_ids": list(agent.skill_ids or []),
         "mcp_ids": list(agent.mcp_ids or []),
+        "opencli_ids": list(getattr(agent, "opencli_ids", None) or []),
         "updated_at": _iso(datetime.now(timezone.utc)),
     }
     _write_json(path / "agent.json", payload)

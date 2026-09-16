@@ -16,6 +16,7 @@ from app.models import (
     ExperimentVariant,
     McpServer,
     ModelConfig,
+    OpenCliEndpoint,
     Role,
     SandboxPolicy,
     Skill,
@@ -90,6 +91,65 @@ def repair_dataset_agent_name_collisions(db: Session) -> None:
         row.name = candidate
 
 
+def migrate_opencli_into_mcp(db: Session) -> None:
+    """Fold standalone OpenCLI endpoints into MCP transport=opencli."""
+    from app.services.opencli_runtime import apply_opencli_config, opencli_tool_specs
+
+    rows = list(db.scalars(select(OpenCliEndpoint)).all())
+    if not rows:
+        return
+    id_map: dict[int, int] = {}
+    for row in rows:
+        existing = db.scalar(select(McpServer).where(McpServer.tenant_id == row.tenant_id, McpServer.name == row.name))
+        if existing is None:
+            existing = db.scalar(select(McpServer).where(
+                McpServer.tenant_id == row.tenant_id,
+                McpServer.endpoint == row.endpoint,
+                McpServer.transport == "opencli",
+            ))
+        if existing is None:
+            config = apply_opencli_config(
+                {"kind": row.kind, "target": row.target, "session": row.session, "token": row.token},
+                endpoint=row.endpoint,
+            )
+            existing = McpServer(
+                name=row.name,
+                transport="opencli",
+                endpoint=row.endpoint,
+                enabled=row.enabled,
+                tools_count=len(opencli_tool_specs()),
+                config=config,
+                tenant_id=row.tenant_id,
+                owner_id=row.owner_id,
+            )
+            db.add(existing)
+            db.flush()
+        else:
+            existing.transport = "opencli"
+            existing.config = apply_opencli_config(
+                {**(existing.config or {}), "kind": row.kind, "target": row.target, "session": row.session, "token": row.token or (existing.config or {}).get("token") or ""},
+                endpoint=row.endpoint or existing.endpoint,
+            )
+            existing.endpoint = row.endpoint or existing.endpoint
+            existing.tools_count = len(opencli_tool_specs())
+        id_map[row.id] = existing.id
+        db.delete(row)
+    for agent in db.scalars(select(Agent)).all():
+        extra = list(getattr(agent, "opencli_ids", None) or [])
+        if not extra:
+            continue
+        mcp_ids = list(agent.mcp_ids or [])
+        for oid in extra:
+            try:
+                nid = id_map.get(int(oid))
+            except (TypeError, ValueError):
+                continue
+            if nid and nid not in mcp_ids:
+                mcp_ids.append(nid)
+        agent.mcp_ids = mcp_ids
+        agent.opencli_ids = []
+
+
 def purge_demo_observability_data(db: Session) -> None:
     """Remove the fixed showcase sessions left by earlier releases."""
     db.execute(delete(ChatMessage).where(ChatMessage.session_id.in_(DEMO_SESSION_IDS)))
@@ -103,14 +163,14 @@ DEFAULT_ROLES = {
     "Agent 开发者": [
         "agent:read", "agent:write", "workflow:read", "workflow:write",
         "eval:read", "eval:run", "experiment:read", "experiment:write",
-        "mcp:read", "skill:read", "model:read",
+        "mcp:read", "mcp:write", "skill:read", "model:read",
         "sandbox:read", "session:read", "session:write",
     ],
     "审计员": ["session:read", "trace:read"],
 }
 
 TENANT_TABLES = (
-    Agent, McpServer, Skill, ModelConfig, Workflow, SandboxPolicy, Role,
+    Agent, McpServer, OpenCliEndpoint, Skill, ModelConfig, Workflow, SandboxPolicy, Role,
     Conversation, ChatMessage, Trace, Dataset, DatasetCase, EvaluationRun, EvaluationResult,
     Experiment, ExperimentAssignment, ExperimentEvent, ExperimentVariant,
 )

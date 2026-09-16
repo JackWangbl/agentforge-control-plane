@@ -59,6 +59,7 @@ class Agent(Base, TimestampMixin, TenantOwnedMixin):
     system_prompt: Mapped[str] = mapped_column(Text, default="")
     skill_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     mcp_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    opencli_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     sandbox_id: Mapped[Optional[int]] = mapped_column(Integer, index=True, default=None)
     workspace: Mapped[str] = mapped_column(String(255), default="")
     success_rate: Mapped[float] = mapped_column(Float, default=0)
@@ -88,6 +89,19 @@ class McpServer(Base, TimestampMixin, TenantOwnedMixin):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     tools_count: Mapped[int] = mapped_column(Integer, default=0)
     config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+
+
+class OpenCliEndpoint(Base, TimestampMixin, TenantOwnedMixin):
+    __tablename__ = "opencli_endpoints"
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(100), unique=True)
+    kind: Mapped[str] = mapped_column(String(24), default="cdp")
+    endpoint: Mapped[str] = mapped_column(String(500))
+    target: Mapped[str] = mapped_column(String(200), default="")
+    session: Mapped[str] = mapped_column(String(80), default="agentforge")
+    token: Mapped[str] = mapped_column(Text, default="")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_status: Mapped[str] = mapped_column(String(40), default="")
 
 
 class Skill(Base, TimestampMixin, TenantOwnedMixin):

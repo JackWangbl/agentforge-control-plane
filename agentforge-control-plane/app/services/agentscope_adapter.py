@@ -57,6 +57,8 @@ async def build_mcp_client(config: dict[str, Any]) -> Any:
     from app.services.mcp_stream import agentscope_transport, normalize_mcp_transport
 
     transport = normalize_mcp_transport(config.get("transport"))
+    if transport == "opencli":
+        raise ValueError("OpenCLI 由控制面作为 MCP 工具本地执行，不走 AgentScope Client")
     if transport in {"streamable_http", "sse"}:
         return HttpStatelessClient(
             name=config["name"],

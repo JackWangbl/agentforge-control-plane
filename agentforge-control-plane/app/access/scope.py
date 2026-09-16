@@ -34,6 +34,7 @@ def attach_access(data: dict, row: Any, user: CurrentUser | None = None) -> dict
         "agents": ResourceKind.AGENT,
         "model_configs": ResourceKind.CREDENTIAL,
         "mcp_servers": ResourceKind.MCP,
+        "opencli_endpoints": ResourceKind.OPENCLI,
         "skills": ResourceKind.SKILL,
         "workflows": ResourceKind.WORKFLOW,
         "sandbox_policies": ResourceKind.SANDBOX,

@@ -23,6 +23,7 @@ from app.routers.auth import router as auth_router
 from app.routers.evaluations import router as evaluation_router
 from app.routers.experiments import router as experiment_router
 from app.services.eval_runner import dump_run, start_eval_worker
+from app.services.opencli_runtime import apply_opencli_config, kind_label, normalize_endpoint, probe_opencli, query_browser
 from app.services.experiment_runtime import assign_unit, record_run
 from app.schemas import (
     AgentCopy,
@@ -31,6 +32,7 @@ from app.schemas import (
     AgentUpdate,
     McpCreate,
     McpUpdate,
+    OpenCliQuery,
     ModelCreate,
     ModelUpdate,
     RoleCreate,
@@ -67,12 +69,13 @@ from app.services.execution_context import (
 from app.services.tenant_resources import validate_agent_bindings
 from app.services.langfuse_tracer import observability_status, public_trace_url
 from app.services.studio_tracer import export_playground_to_studio
-from app.seed import ensure_iam, purge_demo_observability_data, repair_dataset_agent_name_collisions, seed_database
+from app.seed import ensure_iam, migrate_opencli_into_mcp, purge_demo_observability_data, repair_dataset_agent_name_collisions, seed_database
 from app.services.eval_catalog import ensure_eval_catalog
 from app.services.agentscope_adapter import complete_chat, initialize_agentscope
 from app.services.mcp_stream import (
     apply_discovered_tools,
     is_http_stream_transport,
+    is_opencli_transport,
     merge_mcp_config,
     public_mcp_config,
     normalize_mcp_transport,
@@ -148,6 +151,7 @@ async def lifespan(_: FastAPI):
         repair_dataset_agent_name_collisions(db)
         purge_demo_observability_data(db)
         purge_junk_and_seed_tools(db)
+        migrate_opencli_into_mcp(db)
         ensure_iam(db)
         ensure_workspaces(list(db.scalars(select(Agent)).all()))
         db.commit()
@@ -177,9 +181,16 @@ def dump(row: Any) -> dict[str, Any]:
         tools = list_mcp_tools(row)
         data["tools"] = tools
         data["tools_count"] = len(tools) if tools else row.tools_count
-        data["runnable"] = is_builtin_mcp(row) or (is_http_stream_transport(row.transport) and bool(tools))
+        data["runnable"] = is_builtin_mcp(row) or is_opencli_transport(row.transport) or (is_http_stream_transport(row.transport) and bool(tools))
         data["transport_label"] = transport_label(row.transport)
         data["config"] = public_mcp_config(row.config)
+        if is_opencli_transport(row.transport):
+            cfg = row.config or {}
+            data["kind"] = cfg.get("kind") or "cdp"
+            data["kind_label"] = kind_label(cfg.get("kind"))
+            data["target"] = cfg.get("target") or ""
+            data["session"] = cfg.get("session") or "agentforge"
+            data["command"] = cfg.get("command") or ""
     if isinstance(row, Skill):
         instruction = skill_instruction(row)
         data["instruction"] = instruction
@@ -187,6 +198,7 @@ def dump(row: Any) -> dict[str, Any]:
     if isinstance(row, Agent):
         data["skill_ids"] = normalize_id_list(data.get("skill_ids"))
         data["mcp_ids"] = normalize_id_list(data.get("mcp_ids"))
+        data["opencli_ids"] = normalize_id_list(data.get("opencli_ids"))
         data["system_prompt"] = row.system_prompt or ""
         data["bound_skills"] = []
         data["bound_mcps"] = []
@@ -448,7 +460,7 @@ def _generate_chat_reply_impl(
             run_pending()
             next_action = "llm"
             flush("running", "llm")
-        rounds = 8 if any((item.get("function") or {}).get("name", "").startswith("browser_") for item in tools) else 4
+        rounds = 8 if any((item.get("function") or {}).get("name", "").startswith(("browser_", "opencli_")) for item in tools) else 4
         for _ in range(rounds):
             result = complete_chat(
                 model_id=model.model_id,
@@ -599,10 +611,18 @@ def create_mcp(payload: McpCreate, user: CurrentUser = Depends(require_permissio
     data = payload.model_dump()
     data["transport"] = normalize_mcp_transport(data.get("transport"))
     data["config"] = merge_mcp_config({}, data.get("config"))
+    if is_opencli_transport(data["transport"]):
+        try:
+            data["config"] = apply_opencli_config(data.get("config"), endpoint=data.get("endpoint") or "")
+            data["endpoint"] = (data["config"].get("endpoint") or data.get("endpoint") or "").strip()
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
     row = stamp_owner(McpServer(**data, tools_count=len((data.get("config") or {}).get("tools") or [])), user)
     if is_builtin_mcp(row):
         row.tools_count = len(list_mcp_tools(row))
         row.config = {**(row.config or {}), "kind": "builtin", "tools": list_mcp_tools(row)}
+    if is_opencli_transport(row.transport):
+        row.tools_count = len(list_mcp_tools(row))
     db.add(row); db.commit(); db.refresh(row); return dump(row)
 
 
@@ -631,6 +651,7 @@ def create_agent(payload: AgentCreate, user: CurrentUser = Depends(require_permi
         user.tenant_id,
         skill_ids=data.get("skill_ids"),
         mcp_ids=data.get("mcp_ids"),
+        opencli_ids=data.get("opencli_ids"),
         sandbox_id=data.get("sandbox_id"),
     )
     row = stamp_owner(Agent(**data), user)
@@ -688,6 +709,7 @@ def copy_agent(item_id: int, payload: Optional[AgentCopy] = None, user: CurrentU
         system_prompt=source.system_prompt or "",
         skill_ids=list(source.skill_ids or []),
         mcp_ids=list(source.mcp_ids or []),
+        opencli_ids=list(getattr(source, "opencli_ids", None) or []),
         sandbox_id=source.sandbox_id,
         workspace="",
         success_rate=0,
@@ -770,6 +792,17 @@ def update_resource(resource: str, item_id: int, payload: dict[str, Any] = Body(
             data["transport"] = normalize_mcp_transport(data["transport"])
         if "config" in data:
             data["config"] = merge_mcp_config(getattr(row, "config", None), data.get("config"))
+        transport = data.get("transport") or row.transport
+        if is_opencli_transport(transport):
+            try:
+                data["config"] = apply_opencli_config(
+                    data.get("config") or row.config,
+                    endpoint=data.get("endpoint") or row.endpoint or "",
+                )
+                if data["config"].get("endpoint"):
+                    data["endpoint"] = data["config"]["endpoint"]
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
     if resource == "agents" and data.get("name") is not None:
         data["name"] = require_unique_agent_name(db, data["name"], exclude_id=item_id)
     if resource == "agents":
@@ -778,6 +811,7 @@ def update_resource(resource: str, item_id: int, payload: dict[str, Any] = Body(
             user.tenant_id,
             skill_ids=data.get("skill_ids"),
             mcp_ids=data.get("mcp_ids"),
+            opencli_ids=data.get("opencli_ids"),
             sandbox_id=data.get("sandbox_id") if "sandbox_id" in data else None,
         )
     for key, value in data.items():
@@ -817,6 +851,25 @@ def test_mcp_connection(item_id: int, user: CurrentUser = Depends(require_permis
     row = access_service.get_row(user, ResourceKind.MCP, item_id, db)
     if not row.enabled:
         raise HTTPException(409, "MCP server is disabled")
+    if is_opencli_transport(row.transport):
+        try:
+            probed = probe_opencli(row)
+            row.config = apply_opencli_config(row.config, endpoint=row.endpoint)
+            row.tools_count = len(list_mcp_tools(row))
+            db.commit()
+            db.refresh(row)
+            tabs = probed.get("tabs")
+            extra = f"，已发现 {tabs} 个标签" if isinstance(tabs, int) else ""
+            return {
+                "id": row.id,
+                "ready": True,
+                "status": "ready",
+                "tools": list_mcp_tools(row),
+                "message": f"{row.name} 已连通 {probed.get('browser') or kind_label((row.config or {}).get('kind'))}{extra}",
+                **{key: value for key, value in probed.items() if key not in {"detail"}},
+            }
+        except Exception as exc:
+            return {"id": row.id, "ready": False, "status": "unreachable", "tools": list_mcp_tools(row), "message": f"{row.name} 探测失败：{exc}"}
     if is_http_stream_transport(row.transport) and not is_builtin_mcp(row):
         try:
             probed = probe_streamable_http(row)
@@ -846,7 +899,7 @@ def test_mcp_connection(item_id: int, user: CurrentUser = Depends(require_permis
             "ready": False,
             "status": "not_runnable",
             "tools": tools,
-            "message": f"{row.name} 当前仅 StdIO 内置 MCP 可直接探测；HTTP Stream 请把传输协议改成 HTTP Stream。",
+            "message": f"{row.name} 当前仅 StdIO 内置、HTTP Stream 或 OpenCLI 可直接探测。",
         }
     sample = execute_tool("get_current_time", {})
     row.tools_count = len(tools)
@@ -860,6 +913,32 @@ def test_mcp_connection(item_id: int, user: CurrentUser = Depends(require_permis
         "sample": sample,
         "message": f"{row.name} 已连通，可用 {len(tools)} 个工具。{sample}",
     }
+
+
+@app.post("/api/mcp/{item_id}/query")
+def query_mcp_opencli(
+    item_id: int,
+    payload: OpenCliQuery,
+    user: CurrentUser = Depends(require_permission("mcp:read")),
+    db: Session = Depends(get_db),
+) -> dict[str, Any]:
+    row = access_service.get_row(user, ResourceKind.MCP, item_id, db)
+    if not row.enabled:
+        raise HTTPException(409, "MCP 已停用")
+    if not is_opencli_transport(row.transport):
+        raise HTTPException(422, "该 MCP 不是 OpenCLI 类型")
+    try:
+        result = query_browser(
+            row,
+            action=payload.action,
+            target=payload.target,
+            selector=payload.selector,
+            expression=payload.expression,
+            command=payload.command,
+        )
+        return {"id": row.id, "name": row.name, **result}
+    except Exception as exc:
+        raise HTTPException(502, f"查询浏览器失败：{exc}") from exc
 
 
 @app.post("/api/skills/{item_id}/test")
