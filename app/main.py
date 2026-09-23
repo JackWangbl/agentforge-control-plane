@@ -90,14 +90,15 @@ from app.services.sandbox_runtime import (
     sandbox_tool_specs,
     selected_sandbox,
 )
+from app.services.flow_runtime import flow_step_spans, is_flow_tool
 from app.services.tool_runtime import (
     agent_allows_tool,
+    agent_openai_tools,
     build_system_prompt,
     execute_tool,
     is_builtin_mcp,
     list_mcp_tools,
     normalize_id_list,
-    openai_tools_for_mcps,
     parse_tool_arguments,
     persist_skill_markdown,
     purge_junk_and_seed_tools,
@@ -371,19 +372,7 @@ def _generate_chat_reply_impl(
     credential = resolve_model_credential(model)
     last_user = next((item["content"] for item in reversed(history) if item.get("role") == "user"), "")
     system_prompt = build_system_prompt(agent, db)
-    bound_mcps = selected_mcps(agent, db)
-    tools = openai_tools_for_mcps(bound_mcps)
-    if selected_sandbox(agent, db):
-        for spec in sandbox_tool_specs():
-            if not any((item.get("function") or {}).get("name") == spec["name"] for item in tools):
-                tools.append({
-                    "type": "function",
-                    "function": {
-                        "name": spec["name"],
-                        "description": spec["description"],
-                        "parameters": spec.get("parameters") or {"type": "object", "properties": {}},
-                    },
-                })
+    tools = agent_openai_tools(agent, db)
     if not credential:
         extra = "当前模型没有密钥，这是预览回复。已绑定的 Skill 和 MCP 工具会在配置密钥后由模型调用。"
         tool_spans: list[dict[str, Any]] = []
@@ -448,6 +437,8 @@ def _generate_chat_reply_impl(
             allowed = agent_allows_tool(agent, db, name)
             output = execute_tool(name, args, db, agent) if allowed else json.dumps({"error": f"Agent 未绑定工具 {name}"}, ensure_ascii=False)
             traces.append(debug_span(f"mcp.{name}", f"调用工具 {name}", "tool", status="ok" if allowed else "error", duration_ms=8, detail=output))
+            if allowed and is_flow_tool(name):
+                traces.extend(flow_step_spans(name, output))
             working.append({"role": "tool", "tool_call_id": call_id, "content": output})
             done_ids.add(call_id)
             pending[:] = [item for item in pending if (item.get("id") or (item.get("function") or {}).get("name")) != call_id]
@@ -654,6 +645,7 @@ def create_agent(payload: AgentCreate, user: CurrentUser = Depends(require_permi
         opencli_ids=data.get("opencli_ids"),
         sandbox_id=data.get("sandbox_id"),
     )
+    validate_agent_flow_tools(db, user.tenant_id, data)
     row = stamp_owner(Agent(**data), user)
     db.add(row)
     db.commit()
@@ -662,6 +654,32 @@ def create_agent(payload: AgentCreate, user: CurrentUser = Depends(require_permi
     db.commit()
     db.refresh(row)
     return dump(row)
+
+
+def validate_agent_flow_tools(db: Session, tenant_id: int, data: dict[str, Any], row: Optional[Agent] = None) -> None:
+    """Reject a flow whose steps name tools the agent will not have bound after this save."""
+    flows = data.get("tool_flows")
+    if not flows:
+        return
+    mcp_ids = data["mcp_ids"] if "mcp_ids" in data else getattr(row, "mcp_ids", None)
+    sandbox_id = data["sandbox_id"] if "sandbox_id" in data else getattr(row, "sandbox_id", None)
+    available: set[str] = set()
+    ids = normalize_id_list(mcp_ids)
+    if ids:
+        servers = db.scalars(select(McpServer).where(
+            McpServer.id.in_(ids),
+            McpServer.tenant_id == tenant_id,
+            McpServer.enabled.is_(True),
+        )).all()
+        for server in servers:
+            available.update(tool["name"] for tool in list_mcp_tools(server))
+    if sandbox_id:
+        available.update(spec["name"] for spec in sandbox_tool_specs())
+    for flow in flows:
+        for step in (flow.get("steps") or []):
+            tool = str((step or {}).get("tool") or "").strip()
+            if tool and tool not in available:
+                raise HTTPException(422, f"链路 {flow.get('name')} 引用了未绑定的工具 {tool}")
 
 
 def agent_name_taken(db: Session, name: str, exclude_id: Optional[int] = None) -> bool:
@@ -710,6 +728,7 @@ def copy_agent(item_id: int, payload: Optional[AgentCopy] = None, user: CurrentU
         skill_ids=list(source.skill_ids or []),
         mcp_ids=list(source.mcp_ids or []),
         opencli_ids=list(getattr(source, "opencli_ids", None) or []),
+        tool_flows=[dict(item) for item in (getattr(source, "tool_flows", None) or []) if isinstance(item, dict)],
         sandbox_id=source.sandbox_id,
         workspace="",
         success_rate=0,
@@ -814,6 +833,7 @@ def update_resource(resource: str, item_id: int, payload: dict[str, Any] = Body(
             opencli_ids=data.get("opencli_ids"),
             sandbox_id=data.get("sandbox_id") if "sandbox_id" in data else None,
         )
+        validate_agent_flow_tools(db, user.tenant_id, data, row)
     for key, value in data.items():
         setattr(row, key, value)
     if resource == "skills":

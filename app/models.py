@@ -60,6 +60,7 @@ class Agent(Base, TimestampMixin, TenantOwnedMixin):
     skill_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     mcp_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
     opencli_ids: Mapped[list[int]] = mapped_column(JSON, default=list)
+    tool_flows: Mapped[list[dict[str, Any]]] = mapped_column(JSON, default=list)
     sandbox_id: Mapped[Optional[int]] = mapped_column(Integer, index=True, default=None)
     workspace: Mapped[str] = mapped_column(String(255), default="")
     success_rate: Mapped[float] = mapped_column(Float, default=0)

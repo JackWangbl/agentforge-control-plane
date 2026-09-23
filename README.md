@@ -1,12 +1,4 @@
 # AgentForge Control Plane
-<img width="3022" height="1728" alt="image" src="https://github.com/user-attachments/assets/5490fadd-6731-4c5c-91aa-5f9f784bd003" />
-
-
-
-
-
-
-适用于小白学习agent有关知识，了解agent的基本生态
 
 基于 Python、FastAPI 与 AgentScope 的 Agent 管理控制面。前端由 FastAPI 同源托管，不需要单独安装 Node.js。
 
@@ -317,6 +309,8 @@ CREATE TABLE IF NOT EXISTS datasets (
   name VARCHAR(120) NOT NULL,
   description VARCHAR(300) NOT NULL,
   source_name VARCHAR(255) NOT NULL,
+  kind VARCHAR(24) NOT NULL,
+  agent_ids JSON NOT NULL,
   case_count INTEGER NOT NULL,
   created_at DATETIME NOT NULL,
   updated_at DATETIME NOT NULL,
@@ -324,6 +318,7 @@ CREATE TABLE IF NOT EXISTS datasets (
   owner_id INTEGER,
   PRIMARY KEY (id),
   KEY ix_datasets_name (name),
+  KEY ix_datasets_kind (kind),
   KEY ix_datasets_tenant_id (tenant_id),
   KEY ix_datasets_owner_id (owner_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
@@ -370,6 +365,7 @@ CREATE TABLE IF NOT EXISTS evaluation_runs (
   skipped INTEGER NOT NULL,
   avg_latency_ms INTEGER NOT NULL,
   total_tokens INTEGER NOT NULL,
+  metrics JSON NOT NULL,
   error_message TEXT NOT NULL,
   started_at DATETIME,
   finished_at DATETIME,
@@ -442,6 +438,36 @@ uvicorn app.main:app --host 127.0.0.1 --port 8080 --reload
 ```
 
 首次启动会补齐缺列、写入默认租户 / 角色 / 用户。空库即可；若已按上文建表，启动时不会重复创建同名表。
+
+出于多租户安全考虑，宿主机本地代码执行默认关闭。默认的新沙箱策略使用一次性 Docker 容器。启动前应安装 Docker，并预先拉取经过审核的镜像：
+
+```bash
+docker pull python:3.11-slim
+docker pull python:3.12-slim
+```
+
+对应配置为：
+
+```dotenv
+SANDBOX_ALLOWED_IMAGES=python:3.11-slim,python:3.12-slim
+SANDBOX_DEFAULT_IMAGE=python:3.11-slim
+```
+
+沙箱运行时填写 `docker:python:3.11-slim`。系统使用 `--pull=never`，不会在执行 Agent 代码时自动拉取未知镜像。每次调用都会创建一次性容器，并启用断网、只读根目录、capability 删除、进程数、CPU 和内存限制。
+
+应用启动时会把数据库中旧的 `python:3.11`、`python:3.12` 策略迁移为对应的 Docker 运行时。请先预拉取镜像再升级服务，否则这些策略会安全地拒绝执行。
+
+联网沙箱不会使用默认 Docker bridge，必须提前创建只通向受控出口代理的 Docker network，并设置 `SANDBOX_EGRESS_NETWORK`。未配置时会拒绝执行。
+
+本地开发确需在宿主机直接试用时，可以在 `.env` 中显式开启：
+
+```dotenv
+ALLOW_UNSAFE_LOCAL_SANDBOX=1
+```
+
+该开关允许 Agent 生成的代码在控制面宿主机运行，不能用于生产环境。
+
+高安全生产环境仍建议把 Docker 调度能力放进独立 Runtime Worker，或使用 gVisor、Kata Containers、Firecracker/Kubernetes；不要把 Docker Socket 暴露给公网控制面。
 
 ## 默认账号
 

@@ -95,6 +95,11 @@ def ensure_schema() -> None:
                     conn.execute(text("ALTER TABLE agents ADD COLUMN opencli_ids JSON NULL"))
                 else:
                     conn.execute(text("ALTER TABLE agents ADD COLUMN opencli_ids TEXT DEFAULT '[]'"))
+            if "tool_flows" not in agent_cols:
+                if is_mysql():
+                    conn.execute(text("ALTER TABLE agents ADD COLUMN tool_flows JSON NULL"))
+                else:
+                    conn.execute(text("ALTER TABLE agents ADD COLUMN tool_flows TEXT DEFAULT '[]'"))
     if "conversations" in inspector.get_table_names():
         conversation_cols = {col["name"] for col in inspector.get_columns("conversations")}
         if "agent_id" not in conversation_cols:

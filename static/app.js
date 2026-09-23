@@ -1541,7 +1541,17 @@ function agentFormHtml(row, models, mcpRows, skillRows, sandboxRows){
       <p class="bind-hint">点开后滚动勾选，技能说明会写入系统提示词。</p>
       ${bindPicker('skill','skill_ids',skillRows,row&&row.skill_ids,'skills','技能')}
     </section>
+    <section class="bind-section">
+      <div class="bind-head"><h3>工具链路</h3><small>按固定顺序执行的 MCP 工具</small></div>
+      <p class="bind-hint">JSON 数组，留空表示不用。每条链路以 flow_名称 暴露给模型，一次调用按 steps 顺序跑完；步骤参数里可以用 {{input.字段}} 引用调用入参、{{steps.步骤id.output.字段}} 引用上一步结果。步骤引用的工具必须已经绑定在上面。</p>
+      <textarea name="tool_flows" class="agent-prompt" spellcheck="false" placeholder='[{"name": "time_then_math", "description": "先取当前时间再算金额", "parameters": {"type": "object", "properties": {"amount": {"type": "number"}}, "required": ["amount"]}, "steps": [{"id": "now", "tool": "get_current_time"}, {"tool": "calculate", "arguments": {"expression": "{{input.amount}}*0.9"}}]}]'>${escapeHtml(toolFlowsText(row))}</textarea>
+    </section>
   </div>`;
+}
+function toolFlowsText(row){
+  const flows=row&&row.tool_flows;
+  if(!Array.isArray(flows)||!flows.length) return '';
+  try{return JSON.stringify(flows,null,2)}catch(e){return ''}
 }
 function updateBindCounts(){
   const form=$('#modalForm'); if(!form) return;
@@ -1718,6 +1728,14 @@ $('#modalForm').addEventListener('submit',async e=>{
     data.skill_ids=[...form.querySelectorAll('input[name="skill_ids"]:checked')].map(x=>Number(x.value));
     data.mcp_ids=[...form.querySelectorAll('input[name="mcp_ids"]:checked')].map(x=>Number(x.value));
     data.sandbox_id=data.sandbox_id?Number(data.sandbox_id):null;
+    const flowText=String(data.tool_flows||'').trim();
+    if(!flowText) data.tool_flows=[];
+    else{
+      let flows;
+      try{flows=JSON.parse(flowText)}catch(err){toast('工具链路不是合法 JSON：'+err.message);return}
+      if(!Array.isArray(flows)){toast('工具链路必须是 JSON 数组');return}
+      data.tool_flows=flows;
+    }
   }
   if(page==='sandboxes'&&data.timeout_seconds!==undefined)data.timeout_seconds=Number(data.timeout_seconds);
   if(page==='mcp'){
@@ -1760,7 +1778,7 @@ $('#modalForm').addEventListener('submit',async e=>{
     await api(id?`/api/${page}/${id}`:`/api/${page}`,{method:id?'PUT':'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});
     $('#modal').close();
     await afterChange(page==='users'?'roles':page, id?'配置已更新':'配置已添加');
-  }catch(err){toast(id?'更新失败，请检查输入内容':'保存失败，请检查必填项')}
+  }catch(err){toast(apiError(err)||(id?'更新失败，请检查输入内容':'保存失败，请检查必填项'))}
 });
 document.querySelectorAll('[data-close-modal]').forEach(button=>button.addEventListener('click',()=>$('#modal').close()));
 function closeBindPickers(except){

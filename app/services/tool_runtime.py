@@ -15,6 +15,13 @@ from sqlalchemy.orm import Session
 from app.models import Agent, McpServer, Skill
 from app.services.browser_runtime import browser_tool_specs, execute_browser_tool
 from app.services.execution_context import ExecutionContext, current_execution_context
+from app.services.flow_runtime import (
+    find_agent_flow,
+    flow_openai_tools,
+    flow_prompt_hint,
+    is_flow_tool,
+    run_tool_flow,
+)
 from app.services.mcp_stream import call_streamable_http_tool, is_http_stream_transport, is_opencli_transport
 from app.services.opencli_runtime import opencli_tool_specs, query_browser
 from app.services.sandbox_runtime import run_sandbox_tool, sandbox_tool_specs, selected_sandbox
@@ -271,6 +278,8 @@ def mcp_tool_hint(db: Session, agent: Optional[Agent] = None) -> str:
 
 
 def agent_allows_tool(agent: Agent, db: Session, tool_name: str) -> bool:
+    if is_flow_tool(tool_name):
+        return find_agent_flow(agent, tool_name) is not None
     if tool_name.startswith("sandbox_") and selected_sandbox(agent, db):
         return True
     for row in selected_mcps(agent, db):
@@ -279,9 +288,26 @@ def agent_allows_tool(agent: Agent, db: Session, tool_name: str) -> bool:
     return False
 
 
+def agent_openai_tools(agent: Agent, db: Session) -> list[dict[str, Any]]:
+    """Every tool the model may call this turn: MCP tools, sandbox tools and flows."""
+    tools = openai_tools_for_mcps(selected_mcps(agent, db))
+    extra: list[dict[str, Any]] = []
+    if selected_sandbox(agent, db):
+        extra.extend(_as_openai_tool(spec) for spec in sandbox_tool_specs())
+    extra.extend(flow_openai_tools(agent))
+    known = {(item.get("function") or {}).get("name") for item in tools}
+    for item in extra:
+        name = (item.get("function") or {}).get("name")
+        if name in known:
+            continue
+        known.add(name)
+        tools.append(item)
+    return tools
+
+
 def build_system_prompt(agent: Agent, db: Session) -> str:
     base = agent.system_prompt.strip() if agent.system_prompt else f"你是{agent.name}。{agent.description or '你是一名专业的企业助手。'}"
-    extras = [skill_prompt_block(db, agent), mcp_tool_hint(db, agent)]
+    extras = [skill_prompt_block(db, agent), mcp_tool_hint(db, agent), flow_prompt_hint(agent)]
     extra = "\n\n".join(part for part in extras if part)
     return f"{base}\n\n{extra}".strip() if extra else base
 
@@ -295,6 +321,18 @@ def execute_tool(name: str, arguments: dict[str, Any], db: Optional[Session] = N
     ):
         context = ExecutionContext.for_agent(agent)
     tenant_id = context.tenant_id if context is not None else getattr(agent, "tenant_id", None)
+    if is_flow_tool(name):
+        if agent is None or db is None:
+            return json.dumps({"error": "缺少 Agent 上下文，无法执行链路"}, ensure_ascii=False)
+        flow = find_agent_flow(agent, name)
+        if flow is None:
+            return json.dumps({"error": f"当前 Agent 未定义链路 {name}"}, ensure_ascii=False)
+        return run_tool_flow(
+            flow,
+            arguments,
+            execute=lambda tool, args: execute_tool(tool, args, db, agent),
+            allows=lambda tool: agent_allows_tool(agent, db, tool),
+        )
     if name == "get_current_time":
         return _current_time()
     if name == "calculate":

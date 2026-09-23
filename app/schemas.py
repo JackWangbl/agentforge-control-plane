@@ -1,6 +1,8 @@
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from app.services.flow_runtime import MAX_FLOW_STEPS, is_flow_tool
 
 
 class ORMModel(BaseModel):
@@ -49,6 +51,35 @@ class WorkflowUpdate(BaseModel):
     graph: Optional[dict[str, Any]] = None
 
 
+class ToolFlowStep(BaseModel):
+    id: str = Field(default="", max_length=40, pattern="^[A-Za-z0-9_-]*$")
+    tool: str = Field(min_length=1, max_length=80)
+    arguments: dict[str, Any] = {}
+    on_error: Optional[str] = Field(default=None, pattern="^(abort|continue)$")
+
+    @field_validator("tool")
+    @classmethod
+    def reject_nested_flow(cls, value: str) -> str:
+        if is_flow_tool(value):
+            raise ValueError("链路步骤不能再调用另一条链路")
+        return value
+
+
+class ToolFlow(BaseModel):
+    name: str = Field(min_length=1, max_length=60, pattern="^[A-Za-z0-9_-]+$")
+    description: str = Field(default="", max_length=300)
+    parameters: dict[str, Any] = {}
+    on_error: str = Field(default="abort", pattern="^(abort|continue)$")
+    steps: list[ToolFlowStep] = Field(min_length=1, max_length=MAX_FLOW_STEPS)
+
+    @model_validator(mode="after")
+    def reject_duplicate_step_ids(self) -> "ToolFlow":
+        ids = [step.id for step in self.steps if step.id]
+        if len(ids) != len(set(ids)):
+            raise ValueError("同一条链路里的步骤 id 不能重复")
+        return self
+
+
 class AgentCreate(BaseModel):
     name: str = Field(min_length=2, max_length=80)
     description: str = ""
@@ -59,7 +90,16 @@ class AgentCreate(BaseModel):
     skill_ids: list[int] = []
     mcp_ids: list[int] = []
     opencli_ids: list[int] = []
+    tool_flows: list[ToolFlow] = []
     sandbox_id: Optional[int] = None
+
+    @field_validator("tool_flows")
+    @classmethod
+    def reject_duplicate_flow_names(cls, flows: list[ToolFlow]) -> list[ToolFlow]:
+        names = [flow.name for flow in flows]
+        if len(names) != len(set(names)):
+            raise ValueError("链路名称不能重复")
+        return flows
 
 
 class OpenCliCreate(BaseModel):
@@ -152,7 +192,18 @@ class AgentUpdate(BaseModel):
     skill_ids: Optional[list[int]] = None
     mcp_ids: Optional[list[int]] = None
     opencli_ids: Optional[list[int]] = None
+    tool_flows: Optional[list[ToolFlow]] = None
     sandbox_id: Optional[int] = None
+
+    @field_validator("tool_flows")
+    @classmethod
+    def reject_duplicate_flow_names(cls, flows: Optional[list[ToolFlow]]) -> Optional[list[ToolFlow]]:
+        if flows is None:
+            return None
+        names = [flow.name for flow in flows]
+        if len(names) != len(set(names)):
+            raise ValueError("链路名称不能重复")
+        return flows
 
 
 class SandboxUpdate(BaseModel):
