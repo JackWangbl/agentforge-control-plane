@@ -2,7 +2,8 @@
 
 试用地址：  http://182.92.117.54/
 
-![Uploading image.png…]()
+<img width="2976" height="1650" alt="image" src="https://github.com/user-attachments/assets/d37d1430-dc49-4e16-b3a8-0e0dddb1817c" />
+
 
 
 
