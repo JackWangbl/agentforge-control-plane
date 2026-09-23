@@ -1,5 +1,7 @@
 # AgentForge Control Plane
 
+试用地址：  http://182.92.117.54/
+
 基于 Python、FastAPI 与 AgentScope 的 Agent 管理控制面。前端由 FastAPI 同源托管，不需要单独安装 Node.js。
 
 打开 <http://127.0.0.1:8080> 即可使用；接口文档在 `/docs`。
